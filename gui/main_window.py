@@ -704,6 +704,22 @@ class MainWindow(QMainWindow):
             self._trigger_restart()
 
     # ── Plugin editor windows (Section 8.4) ───────────────────────────────────
+    #
+    # Constraint: Pedalboard's show_editor() MUST be called from the main
+    # (Qt GUI) thread. It is also blocking — it pumps the OS message loop
+    # internally until the user closes the window.
+    #
+    # Pattern:
+    #   1. Snapshot existing HWNDs on the main thread (before the call).
+    #   2. Post show_editor() to the main thread via QTimer.singleShot(0).
+    #      This returns immediately to the caller; show_editor() runs at the
+    #      next event-loop iteration, blocking there until the window closes.
+    #   3. Start a background thread to poll for the new HWND via EnumWindows
+    #      snapshot-diff. Store it in the registry when found.
+    #   4. The registry entry tracks (hwnd_holder, alive_flag) instead of a
+    #      thread — the editor is not "on a thread" anymore; it's on the main
+    #      event loop. alive_flag is a threading.Event cleared when
+    #      show_editor() returns.
 
     @Slot(int)
     def _on_open_editor(self, index: int) -> None:
@@ -715,9 +731,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Prevent duplicate editors
+        # Prevent duplicate open editors for this slot
         existing = self._editor_registry.get(index)
-        if existing and existing[0].is_alive():
+        if existing and not existing["done"].is_set():
             log.info("Editor for slot %d already open.", index)
             return
 
@@ -730,53 +746,97 @@ class MainWindow(QMainWindow):
             return
         plugin = plugins[0]
 
-        # Snapshot existing windows before spawning
-        handles_before = set()
+        # 1. Snapshot before — must happen before show_editor() is posted
+        handles_before: set = set()
         win32gui.EnumWindows(lambda h, _: handles_before.add(h), None)
 
-        # Spawn editor thread
-        def run_editor():
+        # Registry entry: hwnd=None until capture thread finds it; done set when closed
+        done_event = threading.Event()
+        entry = {"hwnd": None, "done": done_event}
+        self._editor_registry[index] = entry
+
+        # 2. Post show_editor() to the main thread event loop.
+        #    QTimer.singleShot(0) fires at the next idle slot — on the main thread.
+        #    It blocks here until the plugin window is closed by the user.
+        def call_show_editor():
             try:
                 plugin.show_editor()
+                log.info("Editor for slot %d closed by user.", index)
             except Exception as e:
-                log.error("Editor for slot %d raised: %s", index, e)
+                log.error("show_editor for slot %d raised: %s", index, e)
+            finally:
+                done_event.set()
+                # Clear hwnd so _close_all_editors knows it's already gone
+                if index in self._editor_registry:
+                    self._editor_registry[index]["hwnd"] = None
 
-        t = threading.Thread(target=run_editor, daemon=True)
-        t.start()
-        self._editor_registry[index] = (t, None)
+        QTimer.singleShot(0, call_show_editor)
 
-        # Capture HWND via snapshot-diff (poll for new window)
+        # 3. Background thread: poll EnumWindows for the new HWND
         def capture_hwnd():
             import time
             deadline = time.monotonic() + 2.0
             while time.monotonic() < deadline:
-                time.sleep(0.01)
-                current = set()
+                time.sleep(0.010)
+                if done_event.is_set():
+                    # show_editor() already returned (very fast open+close) — no hwnd needed
+                    return
+                current: set = set()
                 win32gui.EnumWindows(lambda h, _: current.add(h), None)
                 new = current - handles_before
                 if new:
                     hwnd = next(iter(new))
                     log.info("Captured editor HWND %d for slot %d.", hwnd, index)
-                    # Update registry entry — GIL-safe tuple replace
-                    thread = self._editor_registry[index][0]
-                    self._editor_registry[index] = (thread, hwnd)
+                    if index in self._editor_registry:
+                        self._editor_registry[index]["hwnd"] = hwnd
                     return
-            log.warning("Could not capture editor HWND for slot %d (timeout).", index)
+            log.warning(
+                "Could not capture editor HWND for slot %d (timeout). "
+                "WM_CLOSE will not be available for this editor.", index
+            )
 
-        hwnd_thread = threading.Thread(target=capture_hwnd, daemon=True)
+        hwnd_thread = threading.Thread(target=capture_hwnd, daemon=True, name=f"hwnd-cap-{index}")
         hwnd_thread.start()
 
     def _close_all_editors(self) -> None:
-        """Send WM_CLOSE to all open editors and join threads (Section 8.4)."""
+        """
+        Post WM_CLOSE to all open editor windows and wait for show_editor()
+        to return (Section 8.4).
+
+        show_editor() runs on the main thread, so we cannot join() it the
+        normal way. Instead we wait on each entry's done_event, which is set
+        when show_editor() returns after the window receives WM_CLOSE.
+        """
         if not _WIN32_AVAILABLE:
             return
-        for slot, (thread, hwnd) in list(self._editor_registry.items()):
+
+        for slot, entry in list(self._editor_registry.items()):
+            hwnd = entry.get("hwnd")
+            done = entry.get("done")
+
             if hwnd is not None:
                 try:
                     win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    log.debug("Posted WM_CLOSE to HWND %d (slot %d).", hwnd, slot)
                 except Exception as e:
                     log.warning("WM_CLOSE failed for slot %d: %s", slot, e)
-            thread.join(timeout=2.0)
+
+            # Wait for show_editor() to return; timeout is a safety net.
+            # If done is None (shouldn't happen) or times out, proceed anyway —
+            # daemon thread semantics mean the editor dies with the process.
+            if done is not None and not done.is_set():
+                # We're on the main thread and show_editor() is ALSO on the main
+                # thread, so waiting here would deadlock. Instead: pump events
+                # briefly to let show_editor() process the WM_CLOSE message.
+                import time
+                from PySide6.QtWidgets import QApplication
+                deadline = time.monotonic() + 2.0
+                while not done.is_set() and time.monotonic() < deadline:
+                    QApplication.processEvents()
+                    time.sleep(0.020)
+                if not done.is_set():
+                    log.warning("Editor for slot %d did not close within timeout.", slot)
+
         self._editor_registry.clear()
 
     # ── Presets ───────────────────────────────────────────────────────────────
