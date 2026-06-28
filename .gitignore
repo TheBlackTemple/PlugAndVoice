@@ -6,3 +6,4 @@ host.log
 presets/*
 session.json
 session.json.bak
+.vscode

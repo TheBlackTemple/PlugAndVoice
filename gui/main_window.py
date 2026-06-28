@@ -113,7 +113,7 @@ class PluginSlot(QWidget):
 
     def _btn(self, label: str, slot) -> QPushButton:
         b = QPushButton(label)
-        b.setFixedWidth(28)
+        b.setFixedWidth(32)
         b.clicked.connect(slot)
         return b
 
@@ -848,7 +848,11 @@ class MainWindow(QMainWindow):
                     log.info("Captured editor HWND %d for slot %d.", hwnd, index)
                     if index in self._editor_registry:
                         self._editor_registry[index]["hwnd"] = hwnd
+
+                    # ── Reposition the window to a usable location ──────────────
+                    self._move_editor_window(hwnd)
                     return
+
             log.warning(
                 "Could not capture editor HWND for slot %d (timeout). "
                 "WM_CLOSE will not be available for this editor.", index
@@ -857,6 +861,23 @@ class MainWindow(QMainWindow):
         hwnd_thread = threading.Thread(target=capture_hwnd, daemon=True, name=f"hwnd-cap-{index}")
         hwnd_thread.start()
 
+    def _move_editor_window(self, hwnd: int, x: int = 200, y: int = 200) -> None:
+        try:
+            hwnd = int(hwnd)  # ensure it's a plain int, not some wrapper object
+
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            width  = right  - left
+            height = bottom - top
+
+            SWP_NOSIZE   = 0x0001
+            SWP_NOZORDER = 0x0004
+
+            win32gui.SetWindowPos(hwnd, 0, x, y, width, height, SWP_NOSIZE | SWP_NOZORDER)
+            log.info("Moved editor HWND %d to (%d, %d).", hwnd, x, y)
+
+        except Exception as e:
+            log.warning("Failed to move editor window: %s", e) 
+            
     def _close_all_editors(self) -> None:
         """
         Post WM_CLOSE to all open editor windows and wait for show_editor()
