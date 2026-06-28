@@ -4,3 +4,5 @@ host.log
 *.pyc
 *.vst3
 presets/*
+session.json
+session.json.bak

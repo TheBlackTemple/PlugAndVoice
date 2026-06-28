@@ -38,6 +38,12 @@ from engine import AudioEngine
 from settings import (
     load_settings, save_settings, scan_vst3,
     find_device_by_name, enumerate_devices,
+    SESSION_PATH, PRESETS_DIR,
+)
+from persistence import (
+    capture_raw_state, save_session, load_session,
+    save_preset, list_presets, delete_preset,
+    build_chain_objects,
 )
 from .styles import DbGauge, C_TEXT_WARN
 from .settings_view import SettingsView
@@ -156,14 +162,14 @@ class MainWindow(QMainWindow):
         self._engine = AudioEngine()
         self._settings = load_settings()
         self._chain_desc: list[dict] = []          # canonical chain description
-        self._editor_registry: dict  = {}          # {slot_idx: (thread, hwnd)}
-        self._shutdown_requested     = False
+        self._editor_registry: dict  = {}          # {slot_idx: {"hwnd":..., "done":Event}}
+        self._shutdown_event         = threading.Event()   # signals worker threads to abort
         self._restarting             = False
         self._muted                  = False
 
         self._build_ui()
         self._setup_meter_timer()
-        self._load_presets()
+        self._load_presets()   # loads presets and restores last session into chain_desc
 
         # Startup: validate devices, optionally autostart
         self._on_startup()
@@ -424,9 +430,19 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # Build chain on this thread (worker thread used for preset loads;
-        # on simple start we build inline since GUI is not yet blocked).
-        chain = self._build_chain_objects(self._chain_desc)
+        # Build chain on the main thread (Pedalboard requires it; Section 4.5 dev note).
+        missing_plugins, load_errors = [], []
+        chain = build_chain_objects(
+            self._chain_desc,
+            on_missing=lambda n: missing_plugins.append(n),
+            on_load_error=lambda n, e: load_errors.append((n, e)),
+        )
+        for name in missing_plugins:
+            QMessageBox.warning(self, "Plugin Not Found",
+                f"Plugin '{name}' was not found in ./vst3 and has been skipped.")
+        for name, e in load_errors:
+            QMessageBox.warning(self, "Plugin Load Failed",
+                f"Could not load '{name}': {e}\n\nSlot will be skipped.")
         self._engine.set_chain(chain)
 
         try:
@@ -465,12 +481,32 @@ class MainWindow(QMainWindow):
         self._latency_lbl.setText(f"{info.get('latency_ms', '—')} ms")
 
     def _stop_engine(self) -> None:
-        """Stop engine and capture state. Blocks until audio thread exits."""
+        """
+        Stop the engine and capture raw_state post-stop.
+        All stop paths (manual, restart, shutdown) go through here or
+        replicate this order. raw_state is read only after the audio
+        thread is confirmed dead (Section 4.6 / 6.1).
+        """
         if not self._engine.running:
             return
-        self._capture_live_state()
+
+        # Snapshot bypass flags (safe pre-stop)
+        for i, entry in enumerate(self._engine._active_chain):
+            if i < len(self._chain_desc):
+                self._chain_desc[i]["bypassed"] = bool(entry[1])
+
+        # Close editors, drain command_q, stop audio thread
         self._close_all_editors()
+        try:
+            while True:
+                self._engine._command_q.get_nowait()
+        except Exception:
+            pass
         self._engine.stop()
+
+        # Read raw_state — audio thread is now dead
+        capture_raw_state(self._chain_desc, self._engine._active_chain)
+
         self._on_engine_stopped()
 
     def _on_engine_stopped(self) -> None:
@@ -504,37 +540,124 @@ class MainWindow(QMainWindow):
         self._mute_btn.style().unpolish(self._mute_btn)
         self._mute_btn.style().polish(self._mute_btn)
 
-    # ── Chain rebuild / restart sequence (Section 4.6) ────────────────────────
+    # ── Chain rebuild / restart sequence (Section 4.6, 9-step mandatory order) ──
 
-    def _trigger_restart(self) -> None:
+    def _trigger_restart(self, new_settings: dict = None) -> None:
         """
-        Universal restart: disable UI → stop → rebuild → start → re-enable.
-        Runs synchronously on the GUI thread (audio join blocks briefly; accepted).
+        Universal restart — the single path for all structural changes and
+        reconfiguration. Follows the mandatory 9-step order from Section 4.6.
+
+        new_settings: if provided, applies before restarting (reconfigure path).
         """
         if self._restarting:
             return
         self._restarting = True
         self._set_ui_interactive(False)
         self._restart_banner.setVisible(True)
-
-        # Process pending events so the banner renders before we block
         from PySide6.QtWidgets import QApplication
         QApplication.processEvents()
 
         try:
             was_running = self._engine.running
-            self._stop_engine()          # capture + close editors + stop
+            if new_settings:
+                self._settings = new_settings
 
-            # Rebuild chain (inline; worker-thread path used for preset loads)
-            chain = self._build_chain_objects(self._chain_desc)
-            self._engine.set_chain(chain)
+            # Step 1: snapshot bypass flags into canonical desc while engine runs.
+            #         raw_state is NOT read here — only bypass flags (safe pre-stop).
+            #         raw_state is read in step 5, after the audio thread is dead.
+            if was_running:
+                for i, entry in enumerate(self._engine._active_chain):
+                    if i < len(self._chain_desc):
+                        self._chain_desc[i]["bypassed"] = bool(entry[1])
 
+            # Step 2: close editor windows cleanly (WM_CLOSE + event pump)
+            self._close_all_editors()
+
+            # Step 3: drain and discard command_q
+            if was_running:
+                try:
+                    while True:
+                        self._engine._command_q.get_nowait()
+                except Exception:
+                    pass
+
+            # Step 4: engine.stop() — blocks until audio thread exits
+            if was_running:
+                self._engine.stop()
+                self._on_engine_stopped()
+
+            # Step 5: read raw_state — NOW safe, audio thread is confirmed dead.
+            #         This is the save-before-stop invariant (Section 4.6 / 6.1).
+            #         raw_state is an opaque C++ blob; reading while the audio thread
+            #         is alive risks a data race at the native level.
+            if was_running:
+                capture_raw_state(self._chain_desc, self._engine._active_chain)
+
+            # Step 6: persist state to disk
+            save_session(self._chain_desc, SESSION_PATH)
+            if new_settings:
+                save_settings(new_settings)
+
+            # Step 7: rebuild chain on the main thread.
+            #
+            # Pedalboard's load_plugin() has the same main-thread requirement as
+            # show_editor() — it must not be called from a worker thread.
+            # The worker-thread pattern is abandoned for this reason.
+            # The "restarting..." banner is already visible; a brief UI freeze
+            # during load is accepted (Section 12.4 / dossier dev note 4.5).
+            if self._shutdown_event.is_set():
+                return
+
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()   # let banner render before blocking
+
+            missing_plugins = []
+            load_errors     = []
+
+            def on_missing(name: str):
+                missing_plugins.append(name)
+
+            def on_load_error(name: str, e: Exception):
+                load_errors.append((name, e))
+
+            try:
+                built_chain = build_chain_objects(
+                    self._chain_desc,
+                    on_missing=on_missing,
+                    on_load_error=on_load_error,
+                )
+            except Exception as e:
+                log.error("Chain build raised unexpectedly: %s", e)
+                QMessageBox.critical(self, "Build Failed", str(e))
+                return
+
+            # Surface skip warnings after the build (not during — no re-entrancy)
+            for name in missing_plugins:
+                QMessageBox.warning(
+                    self, "Plugin Not Found",
+                    f"Plugin '{name}' was not found in ./vst3 and has been skipped."
+                )
+            for name, e in load_errors:
+                QMessageBox.warning(
+                    self, "Plugin Load Failed",
+                    f"Could not load '{name}': {e}\n\nSlot will be skipped."
+                )
+
+            if self._shutdown_event.is_set():
+                return
+
+            # Step 8: engine.start() with new configuration
+            self._engine.set_chain(built_chain)
             if was_running:
                 self._start_engine()
+
+            # Step 9: UI re-enabled in finally block
+
         finally:
-            self._restarting = False
-            self._restart_banner.setVisible(False)
-            self._set_ui_interactive(True)
+            if not self._shutdown_event.is_set():
+                self._restarting = False
+                self._restart_banner.setVisible(False)
+                self._set_ui_interactive(True)
 
     def _set_ui_interactive(self, enabled: bool) -> None:
         self._settings_btn.setEnabled(enabled)
@@ -544,75 +667,11 @@ class MainWindow(QMainWindow):
         for slot in self._slot_widgets():
             slot.set_interactive(enabled)
 
+    def _post_warning(self, message: str) -> None:
+        """Thread-safe warning popup via QTimer (called from worker thread)."""
+        QTimer.singleShot(0, lambda: QMessageBox.warning(self, "MicHost", message))
+
     # ── Chain description management ──────────────────────────────────────────
-
-    def _capture_live_state(self) -> None:
-        """
-        Read raw_state from live plugins back into _chain_desc.
-        ONLY safe to call after engine is confirmed stopped — enforced by
-        calling this before engine.stop() in _stop_engine().
-        This is the save-before-stop invariant.
-        """
-        # We capture BEFORE stop() — engine is still running but we read
-        # raw_state from the Pedalboard objects in the chain.
-        # Audio thread is still alive here, but raw_state is a property read
-        # on the Pedalboard object; the audio thread only calls __call__ on it,
-        # so this is safe at the Python level (GIL protects the attribute read).
-        chain = self._engine._active_chain
-        for i, entry in enumerate(chain):
-            if i >= len(self._chain_desc):
-                break
-            board = entry[0]
-            for plugin in board:
-                try:
-                    import base64
-                    raw = plugin.raw_state
-                    self._chain_desc[i]["raw_state"] = (
-                        base64.b64encode(raw).decode() if raw else None
-                    )
-                    self._chain_desc[i]["bypassed"] = bool(entry[1])
-                except Exception as e:
-                    log.warning("Could not capture raw_state for slot %d: %s", i, e)
-
-    def _build_chain_objects(self, desc: list[dict]) -> list:
-        """
-        Instantiate Pedalboard objects from chain description.
-        Returns list of [Pedalboard, bypass_flag].
-        """
-        from pedalboard import Pedalboard, load_plugin
-        import base64
-
-        chain = []
-        for item in desc:
-            path = item.get("path", "")
-            if not os.path.exists(path):
-                log.warning("Plugin not found, skipping: %s", path)
-                QMessageBox.warning(
-                    self, "Plugin Not Found",
-                    f"Plugin '{item.get('name', path)}' was not found in ./vst3 and has been skipped."
-                )
-                continue
-            try:
-                log.info("Loading plugin: %s", path)
-                plugin = load_plugin(path)
-
-                raw_b64 = item.get("raw_state")
-                if raw_b64:
-                    log.info("Restoring state for plugin: %s (%s)", item.get("name"), path)
-                    try:
-                        plugin.raw_state = base64.b64decode(raw_b64)
-                    except Exception as e:
-                        log.error("State restore failed for %s: %s", item.get("name"), e)
-
-                board = Pedalboard([plugin])
-                chain.append([board, bool(item.get("bypassed", False))])
-            except Exception as e:
-                log.error("Failed to load plugin %s: %s", path, e)
-                QMessageBox.warning(
-                    self, "Plugin Load Failed",
-                    f"Could not load '{item.get('name', path)}':\n{e}\n\nSlot will be skipped."
-                )
-        return chain
 
     # ── Chain UI ──────────────────────────────────────────────────────────────
 
@@ -842,26 +901,22 @@ class MainWindow(QMainWindow):
     # ── Presets ───────────────────────────────────────────────────────────────
 
     def _load_presets(self) -> None:
-        """Populate preset combo from ./presets/. Create 'Default' if empty."""
-        import json, glob
-        preset_dir = "./presets"
-        os.makedirs(preset_dir, exist_ok=True)
-        files = sorted(glob.glob(os.path.join(preset_dir, "*.json")))
+        """
+        Populate preset combo from ./presets/ using persistence layer.
+        Restores the last session (session.json) as the active chain.
+        If no presets exist, creates a 'Default' preset.
+        """
+        presets_list = list_presets(PRESETS_DIR)
 
-        self._presets: dict[str, dict] = {}  # name → data dict
-
-        for f in files:
-            try:
-                with open(f) as fh:
-                    data = json.load(fh)
-                name = data.get("name") or os.path.splitext(os.path.basename(f))[0]
-                self._presets[name] = data
-            except Exception as e:
-                log.warning("Could not load preset %s: %s", f, e)
+        self._presets: dict[str, dict] = {}
+        for data in presets_list:
+            name = data.get("name", "Unnamed")
+            self._presets[name] = data
 
         if not self._presets:
-            self._presets["Default"] = {"version": 1, "name": "Default", "chain": []}
-            self._save_preset_to_disk("Default", self._presets["Default"])
+            default_data = {"version": 1, "name": "Default", "chain": []}
+            self._presets["Default"] = default_data
+            save_preset("Default", [], PRESETS_DIR)
 
         self._preset_combo.blockSignals(True)
         self._preset_combo.clear()
@@ -869,9 +924,18 @@ class MainWindow(QMainWindow):
             self._preset_combo.addItem(name)
         self._preset_combo.blockSignals(False)
 
-        # Load first preset into chain
-        first = next(iter(self._presets.values()))
-        self._apply_preset_data(first, from_startup=True)
+        # Restore last session as active chain (Section 6.2).
+        # Session overrides the first preset on startup — it is "what was open last."
+        session_chain = load_session(SESSION_PATH)
+        if session_chain:
+            log.info("Restoring last session (%d slot(s)).", len(session_chain))
+            self._chain_desc = session_chain
+        else:
+            # Fall back to first preset
+            first = next(iter(self._presets.values()))
+            self._chain_desc = list(first.get("chain", []))
+
+        self._rebuild_chain_ui()
 
     def _apply_preset_data(self, data: dict, from_startup: bool = False) -> None:
         self._chain_desc = list(data.get("chain", []))
@@ -914,7 +978,7 @@ class MainWindow(QMainWindow):
         name = name.strip()
         data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
         self._presets[name] = data
-        self._save_preset_to_disk(name, data)
+        save_preset(name, list(self._chain_desc), PRESETS_DIR)
         self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
 
@@ -929,7 +993,7 @@ class MainWindow(QMainWindow):
         name = name.strip()
         data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
         self._presets[name] = data
-        self._save_preset_to_disk(name, data)
+        save_preset(name, list(self._chain_desc), PRESETS_DIR)
         if self._preset_combo.findText(name) < 0:
             self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
@@ -946,8 +1010,12 @@ class MainWindow(QMainWindow):
         data = self._presets.pop(old_name)
         data["name"] = new_name
         self._presets[new_name] = data
-        self._delete_preset_file(old_name)
-        self._save_preset_to_disk(new_name, data)
+        # Delete old file (find it by safe-name match) and write new
+        import re, glob
+        old_safe = re.sub(r"[^\w\- ]", "_", old_name)
+        old_path = os.path.join(PRESETS_DIR, f"{old_safe}.json")
+        delete_preset(old_path)
+        save_preset(new_name, list(data.get("chain", [])), PRESETS_DIR)
         idx = self._preset_combo.findText(old_name)
         if idx >= 0:
             self._preset_combo.setItemText(idx, new_name)
@@ -965,37 +1033,19 @@ class MainWindow(QMainWindow):
         if resp != QMessageBox.Yes:
             return
         self._presets.pop(name, None)
-        self._delete_preset_file(name)
+        import re
+        safe = re.sub(r"[^\w\- ]", "_", name)
+        delete_preset(os.path.join(PRESETS_DIR, f"{safe}.json"))
         idx = self._preset_combo.findText(name)
         if idx >= 0:
             self._preset_combo.removeItem(idx)
 
         if not self._presets:
-            data = {"version": 1, "name": "Default", "chain": []}
-            self._presets["Default"] = data
-            self._save_preset_to_disk("Default", data)
+            default_data = {"version": 1, "name": "Default", "chain": []}
+            self._presets["Default"] = default_data
+            save_preset("Default", [], PRESETS_DIR)
             self._preset_combo.addItem("Default")
             self._preset_combo.setCurrentText("Default")
-
-    def _save_preset_to_disk(self, name: str, data: dict) -> None:
-        import json, re
-        safe = re.sub(r'[^\w\- ]', '_', name)
-        path = os.path.join("./presets", f"{safe}.json")
-        try:
-            with open(path, "w") as f:
-                json.dump(data, f, indent=2)
-        except OSError as e:
-            log.error("Could not save preset %s: %s", name, e)
-
-    def _delete_preset_file(self, name: str) -> None:
-        import json, re, glob
-        safe = re.sub(r'[^\w\- ]', '_', name)
-        path = os.path.join("./presets", f"{safe}.json")
-        try:
-            if os.path.exists(path):
-                os.remove(path)
-        except OSError as e:
-            log.warning("Could not delete preset file %s: %s", path, e)
 
     # ── Meter polling ─────────────────────────────────────────────────────────
 
@@ -1021,16 +1071,54 @@ class MainWindow(QMainWindow):
 
         self._xrun_lbl.setText(f"xruns: {self._engine.xrun_count}")
 
-    # ── Close event (graceful shutdown, Section 11) ───────────────────────────
+    # ── Close event (graceful shutdown, Section 11) ─────────────────────────
+    #
+    # Mandatory order. Do not reorder (Section 11).
 
     def closeEvent(self, event) -> None:
-        self._shutdown_requested = True
+        from PySide6.QtWidgets import QApplication
+
+        log.info("Shutdown initiated.")
+
+        # 1+2. Signal intent, disable UI, stop meter timer
         self._set_ui_interactive(False)
+        self._meter_timer.stop()
+        QApplication.processEvents()
+
+        # 3. Signal worker threads to abort
+        self._shutdown_event.set()
+
+        was_running = self._engine.running
+
+        # 4. Snapshot bypass flags (safe pre-stop; raw_state is NOT read yet)
+        if was_running:
+            for i, entry in enumerate(self._engine._active_chain):
+                if i < len(self._chain_desc):
+                    self._chain_desc[i]["bypassed"] = bool(entry[1])
+
+        # 5. Close editor windows (WM_CLOSE + event pump)
         self._close_all_editors()
-        if self._engine.running:
-            self._capture_live_state()
+
+        # 6. Drain and discard command_q
+        if was_running:
+            try:
+                while True:
+                    self._engine._command_q.get_nowait()
+            except Exception:
+                pass
+
+        # 7. engine.stop() — joins audio thread; blocks until exited
+        if was_running:
             self._engine.stop()
-        # Read raw_state and save session (Module 5 will add full persistence here)
+
+        # 8. Read raw_state — audio thread is now confirmed dead (Section 6.1)
+        if was_running:
+            capture_raw_state(self._chain_desc, self._engine._active_chain)
+
+        # 9. Save session + settings to disk
+        save_session(self._chain_desc, SESSION_PATH)
         save_settings(self._settings)
+
         log.info("Shutdown complete.")
         event.accept()
+
