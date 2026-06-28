@@ -1,0 +1,5 @@
+host_settings.json
+host_settings.json.bak
+host.log
+*.pyc
+*.vst3
