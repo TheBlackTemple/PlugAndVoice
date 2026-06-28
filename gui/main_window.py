@@ -1,0 +1,976 @@
+"""
+main_window.py — MicHost main window (Section 12.2).
+
+Layout (top → bottom, mirroring signal flow):
+  Management bar    — Settings button, restart indicator
+  Preset header     — current preset name, dropdown, new/save-as/rename/delete
+  Input block       — device info readouts + dB gauge (pre-chain)
+  VST chain block   — ordered plugin slots (add, move, bypass, remove, editor)
+  Output block      — device info readouts + dB gauge (master)
+  Footer            — Start / Stop / Mute  |  latency  |  xrun counter
+
+Engine interaction:
+  - Never calls engine methods directly from signal handlers; all calls are
+    dispatched through _engine_call() which checks engine state first.
+  - Structural mutations (add/remove/reorder) call _trigger_restart().
+  - Live commands (mute, bypass) post via engine.set_mute / engine.set_bypass.
+  - Meters polled by QTimer at ~30 ms.
+
+Editor windows (Section 8.4):
+  - One daemon thread per open editor.
+  - EnumWindows snapshot-diff to capture HWND.
+  - WM_CLOSE on restart / close.
+"""
+
+import logging
+import os
+import threading
+from typing import Optional
+
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtWidgets import (
+    QComboBox, QDialog, QGroupBox, QHBoxLayout, QInputDialog,
+    QLabel, QMainWindow, QMessageBox, QPushButton,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QFrame,
+)
+
+from engine import AudioEngine
+from settings import (
+    load_settings, save_settings, scan_vst3,
+    find_device_by_name, enumerate_devices,
+)
+from .styles import DbGauge, C_TEXT_WARN
+from .settings_view import SettingsView
+
+log = logging.getLogger(__name__)
+
+# Optional: pywin32 for editor window management
+try:
+    import win32gui
+    import win32con
+    _WIN32_AVAILABLE = True
+except ImportError:
+    _WIN32_AVAILABLE = False
+    log.warning("pywin32 not available — editor WM_CLOSE will not work.")
+
+
+# ── Plugin slot widget ────────────────────────────────────────────────────────
+
+class PluginSlot(QWidget):
+    """
+    One row in the chain block.
+    Signals: move_up, move_down, bypass_toggled, remove, open_editor.
+    """
+
+    move_up        = Signal(int)    # slot index
+    move_down      = Signal(int)    # slot index
+    bypass_toggled = Signal(int, bool)  # slot index, new bypass state
+    remove         = Signal(int)
+    open_editor    = Signal(int)
+
+    def __init__(self, index: int, name: str, bypassed: bool = False, parent=None):
+        super().__init__(parent)
+        self.index = index
+        self._bypassed = bypassed
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+
+        # Gauge
+        self.gauge = DbGauge(self, width=6, height=36)
+        layout.addWidget(self.gauge)
+
+        # Plugin name
+        self._name_label = QLabel(name)
+        self._name_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        layout.addWidget(self._name_label)
+
+        # Controls
+        self._up_btn    = self._btn("▲", lambda: self.move_up.emit(self.index))
+        self._down_btn  = self._btn("▼", lambda: self.move_down.emit(self.index))
+        self._bypass_btn= QPushButton("BYP")
+        self._bypass_btn.setCheckable(True)
+        self._bypass_btn.setChecked(bypassed)
+        self._bypass_btn.setFixedWidth(38)
+        self._bypass_btn.clicked.connect(self._on_bypass)
+        self._editor_btn= self._btn("UI",  lambda: self.open_editor.emit(self.index))
+        self._remove_btn= self._btn("✕",  lambda: self.remove.emit(self.index))
+        self._remove_btn.setProperty("class", "danger")
+
+        for w in (self._up_btn, self._down_btn, self._bypass_btn,
+                  self._editor_btn, self._remove_btn):
+            layout.addWidget(w)
+
+        self._update_bypass_style()
+        self.setStyleSheet("PluginSlot { border-bottom: 1px solid #1e2025; }")
+
+    def _btn(self, label: str, slot) -> QPushButton:
+        b = QPushButton(label)
+        b.setFixedWidth(28)
+        b.clicked.connect(slot)
+        return b
+
+    def _on_bypass(self) -> None:
+        self._bypassed = self._bypass_btn.isChecked()
+        self._update_bypass_style()
+        self.bypass_toggled.emit(self.index, self._bypassed)
+
+    def _update_bypass_style(self) -> None:
+        if self._bypassed:
+            self._bypass_btn.setProperty("class", "bypassed")
+            self._name_label.setStyleSheet("color: #6b7280; text-decoration: line-through;")
+        else:
+            self._bypass_btn.setProperty("class", "")
+            self._name_label.setStyleSheet("")
+        self._bypass_btn.style().unpolish(self._bypass_btn)
+        self._bypass_btn.style().polish(self._bypass_btn)
+
+    def set_interactive(self, enabled: bool) -> None:
+        for w in (self._up_btn, self._down_btn, self._bypass_btn,
+                  self._editor_btn, self._remove_btn):
+            w.setEnabled(enabled)
+
+    def update_gauge(self, db: float) -> None:
+        self.gauge.update_level(db)
+
+
+# ── Main window ───────────────────────────────────────────────────────────────
+
+class MainWindow(QMainWindow):
+    """
+    The primary application window.
+
+    Owns:
+      - AudioEngine instance
+      - Canonical chain description (list of dicts: path/name/bypassed/raw_state)
+      - Editor registry {slot_index: (thread, hwnd)}
+      - Preset list (loaded from ./presets/)
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("MicHost")
+        self.setMinimumSize(480, 680)
+
+        self._engine = AudioEngine()
+        self._settings = load_settings()
+        self._chain_desc: list[dict] = []          # canonical chain description
+        self._editor_registry: dict  = {}          # {slot_idx: (thread, hwnd)}
+        self._shutdown_requested     = False
+        self._restarting             = False
+        self._muted                  = False
+
+        self._build_ui()
+        self._setup_meter_timer()
+        self._load_presets()
+
+        # Startup: validate devices, optionally autostart
+        self._on_startup()
+
+    # ── UI construction ───────────────────────────────────────────────────────
+
+    def _build_ui(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setSpacing(0)
+        root.setContentsMargins(0, 0, 0, 0)
+
+        root.addWidget(self._build_management_bar())
+        root.addWidget(self._build_restart_banner())
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+        scroll_content = QWidget()
+        scroll_layout  = QVBoxLayout(scroll_content)
+        scroll_layout.setSpacing(6)
+        scroll_layout.setContentsMargins(8, 8, 8, 8)
+
+        scroll_layout.addWidget(self._build_preset_bar())
+        scroll_layout.addWidget(self._build_input_block())
+        scroll_layout.addWidget(self._build_chain_block())
+        scroll_layout.addWidget(self._build_output_block())
+        scroll_layout.addStretch()
+
+        scroll_area.setWidget(scroll_content)
+        root.addWidget(scroll_area, stretch=1)
+        root.addWidget(self._build_footer())
+
+    def _build_management_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedHeight(36)
+        bar.setStyleSheet("background: #22252a; border-bottom: 1px solid #2e3138;")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 0, 8, 0)
+
+        title = QLabel("MICHOST")
+        title.setStyleSheet("font-size: 11px; letter-spacing: 2px; color: #6b7280; font-weight: bold;")
+        layout.addWidget(title)
+        layout.addStretch()
+
+        self._settings_btn = QPushButton("⚙  Settings")
+        self._settings_btn.clicked.connect(self._open_settings)
+        layout.addWidget(self._settings_btn)
+        return bar
+
+    def _build_restart_banner(self) -> QWidget:
+        self._restart_banner = QWidget()
+        self._restart_banner.setFixedHeight(28)
+        self._restart_banner.setStyleSheet(
+            f"background: #5a3e00; border-bottom: 1px solid #8a5c00;"
+        )
+        layout = QHBoxLayout(self._restart_banner)
+        layout.setContentsMargins(12, 0, 12, 0)
+        lbl = QLabel("⟳  Restarting engine…")
+        lbl.setStyleSheet("color: #e8a030; font-size: 11px;")
+        layout.addWidget(lbl)
+        self._restart_banner.setVisible(False)
+        return self._restart_banner
+
+    def _build_preset_bar(self) -> QGroupBox:
+        box = QGroupBox("PRESET")
+        layout = QHBoxLayout(box)
+        layout.setSpacing(6)
+
+        self._preset_combo = QComboBox()
+        self._preset_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_selected)
+        layout.addWidget(self._preset_combo)
+
+        for label, slot in (
+            ("New",     self._new_preset),
+            ("Save as", self._save_preset_as),
+            ("Rename",  self._rename_preset),
+            ("Delete",  self._delete_preset),
+        ):
+            b = QPushButton(label)
+            b.setFixedWidth(60)
+            b.clicked.connect(slot)
+            layout.addWidget(b)
+
+        return box
+
+    def _build_input_block(self) -> QGroupBox:
+        box = QGroupBox("INPUT")
+        layout = QHBoxLayout(box)
+        layout.setSpacing(10)
+
+        self._in_gauge = DbGauge(box, width=10, height=64)
+        layout.addWidget(self._in_gauge)
+
+        info = QVBoxLayout()
+        self._in_device_lbl  = QLabel("—")
+        self._in_format_lbl  = QLabel("—")
+        self._in_device_lbl.setProperty("class", "mono")
+        self._in_format_lbl.setProperty("class", "dim")
+        info.addWidget(self._in_device_lbl)
+        info.addWidget(self._in_format_lbl)
+        info.addStretch()
+        layout.addLayout(info, stretch=1)
+        return box
+
+    def _build_chain_block(self) -> QGroupBox:
+        self._chain_box = QGroupBox("CHAIN")
+        self._chain_layout = QVBoxLayout(self._chain_box)
+        self._chain_layout.setSpacing(0)
+        self._chain_layout.setContentsMargins(4, 4, 4, 4)
+
+        self._empty_chain_lbl = QLabel("No plugins.  Add one below.")
+        self._empty_chain_lbl.setProperty("class", "dim")
+        self._empty_chain_lbl.setAlignment(Qt.AlignCenter)
+        self._empty_chain_lbl.setContentsMargins(0, 12, 0, 12)
+        self._chain_layout.addWidget(self._empty_chain_lbl)
+
+        # Add button
+        add_row = QHBoxLayout()
+        add_row.addStretch()
+        self._add_btn = QPushButton("+ Add plugin")
+        self._add_btn.clicked.connect(self._on_add_plugin)
+        add_row.addWidget(self._add_btn)
+        self._chain_layout.addLayout(add_row)
+
+        return self._chain_box
+
+    def _build_output_block(self) -> QGroupBox:
+        box = QGroupBox("OUTPUT")
+        layout = QHBoxLayout(box)
+        layout.setSpacing(10)
+
+        self._out_gauge = DbGauge(box, width=10, height=64)
+        layout.addWidget(self._out_gauge)
+
+        info = QVBoxLayout()
+        self._out_device_lbl = QLabel("—")
+        self._out_format_lbl = QLabel("—")
+        self._out_device_lbl.setProperty("class", "mono")
+        self._out_format_lbl.setProperty("class", "dim")
+        info.addWidget(self._out_device_lbl)
+        info.addWidget(self._out_format_lbl)
+        info.addStretch()
+        layout.addLayout(info, stretch=1)
+        return box
+
+    def _build_footer(self) -> QWidget:
+        footer = QWidget()
+        footer.setFixedHeight(44)
+        footer.setStyleSheet("background: #22252a; border-top: 1px solid #2e3138;")
+        layout = QHBoxLayout(footer)
+        layout.setContentsMargins(10, 0, 10, 0)
+        layout.setSpacing(8)
+
+        self._start_btn = QPushButton("▶  Start")
+        self._start_btn.setProperty("class", "start")
+        self._start_btn.setFixedWidth(80)
+        self._start_btn.clicked.connect(self._on_start)
+        layout.addWidget(self._start_btn)
+
+        self._stop_btn = QPushButton("■  Stop")
+        self._stop_btn.setProperty("class", "stop")
+        self._stop_btn.setFixedWidth(80)
+        self._stop_btn.setEnabled(False)
+        self._stop_btn.clicked.connect(self._on_stop)
+        layout.addWidget(self._stop_btn)
+
+        self._mute_btn = QPushButton("Mute")
+        self._mute_btn.setProperty("class", "mute")
+        self._mute_btn.setFixedWidth(60)
+        self._mute_btn.clicked.connect(self._on_mute_toggle)
+        layout.addWidget(self._mute_btn)
+
+        layout.addStretch()
+
+        self._latency_lbl = QLabel("— ms")
+        self._latency_lbl.setProperty("class", "readout")
+        self._latency_lbl.setToolTip("Nominal latency (blocksize / samplerate × 1000)")
+        layout.addWidget(self._latency_lbl)
+
+        sep = QLabel("|")
+        sep.setProperty("class", "dim")
+        layout.addWidget(sep)
+
+        self._xrun_lbl = QLabel("xruns: 0")
+        self._xrun_lbl.setProperty("class", "dim")
+        layout.addWidget(self._xrun_lbl)
+
+        return footer
+
+    # ── Startup ───────────────────────────────────────────────────────────────
+
+    def _on_startup(self) -> None:
+        from settings import validate_devices
+        devices = enumerate_devices()
+        result  = validate_devices(self._settings, devices)
+
+        if not result.ok:
+            log.info("Startup device validation failed — opening settings.")
+            self._open_settings(force=True)
+            return
+
+        if self._settings.get("autostart"):
+            log.info("Autostart enabled — starting engine.")
+            self._start_engine()
+
+    # ── Settings ──────────────────────────────────────────────────────────────
+
+    def _open_settings(self, force: bool = False, device_lost: bool = False) -> None:
+        view = SettingsView(self, device_lost=device_lost)
+        view.settings_applied.connect(self._on_settings_applied)
+        if force:
+            view.exec()
+        else:
+            view.exec()
+
+    @Slot(dict)
+    def _on_settings_applied(self, new_settings: dict) -> None:
+        changed = (
+            new_settings.get("input_device")  != self._settings.get("input_device") or
+            new_settings.get("output_device") != self._settings.get("output_device") or
+            new_settings.get("samplerate")    != self._settings.get("samplerate") or
+            new_settings.get("blocksize")     != self._settings.get("blocksize")
+        )
+        self._settings = new_settings
+
+        if self._engine.running and changed:
+            log.info("Settings changed while engine running — triggering restart.")
+            self._trigger_restart()
+        elif not self._engine.running and self._settings.get("autostart"):
+            self._start_engine()
+
+    # ── Engine start / stop ───────────────────────────────────────────────────
+
+    def _start_engine(self) -> None:
+        srate = self._settings.get("samplerate")
+        if srate is None:
+            # Resolve device native rate
+            try:
+                devices = enumerate_devices()
+                d = find_device_by_name(self._settings.get("input_device", ""), devices)
+                srate = d.default_samplerate if d else 48000.0
+            except Exception:
+                srate = 48000.0
+
+        blocksize = self._settings.get("blocksize") or 256
+        devices   = enumerate_devices()
+
+        in_entry  = find_device_by_name(self._settings.get("input_device", ""), devices)
+        out_entry = find_device_by_name(self._settings.get("output_device", ""), devices)
+
+        if in_entry is None or out_entry is None:
+            QMessageBox.warning(
+                self, "MicHost",
+                "Configured audio device not found.\nPlease open Settings and re-select."
+            )
+            return
+
+        # Build chain on this thread (worker thread used for preset loads;
+        # on simple start we build inline since GUI is not yet blocked).
+        chain = self._build_chain_objects(self._chain_desc)
+        self._engine.set_chain(chain)
+
+        try:
+            self._engine.start(
+                input_device=in_entry.index,
+                output_device=out_entry.index,
+                samplerate=srate,
+                blocksize=blocksize,
+            )
+        except Exception as e:
+            log.error("Engine start failed: %s", e)
+            QMessageBox.critical(
+                self, "Engine Start Failed",
+                f"Could not start the audio engine:\n\n{e}\n\n"
+                "Open Settings to check device configuration."
+            )
+            return
+
+        self._on_engine_started()
+
+    def _on_engine_started(self) -> None:
+        info = self._engine.stream_info
+        self._start_btn.setEnabled(False)
+        self._stop_btn.setEnabled(True)
+
+        # Update info blocks
+        self._in_device_lbl.setText(info.get("input_device", "—"))
+        self._in_format_lbl.setText(
+            f"{info.get('samplerate', 0):.0f} Hz  •  "
+            f"{info.get('in_channels', 0)}ch  •  block {info.get('blocksize', 0)}"
+        )
+        self._out_device_lbl.setText(info.get("output_device", "—"))
+        self._out_format_lbl.setText(
+            f"{info.get('samplerate', 0):.0f} Hz  •  2ch"
+        )
+        self._latency_lbl.setText(f"{info.get('latency_ms', '—')} ms")
+
+    def _stop_engine(self) -> None:
+        """Stop engine and capture state. Blocks until audio thread exits."""
+        if not self._engine.running:
+            return
+        self._capture_live_state()
+        self._close_all_editors()
+        self._engine.stop()
+        self._on_engine_stopped()
+
+    def _on_engine_stopped(self) -> None:
+        self._start_btn.setEnabled(True)
+        self._stop_btn.setEnabled(False)
+        self._in_device_lbl.setText("—")
+        self._in_format_lbl.setText("—")
+        self._out_device_lbl.setText("—")
+        self._out_format_lbl.setText("—")
+        self._latency_lbl.setText("— ms")
+        self._xrun_lbl.setText("xruns: 0")
+
+    @Slot()
+    def _on_start(self) -> None:
+        self._start_engine()
+
+    @Slot()
+    def _on_stop(self) -> None:
+        self._stop_engine()
+
+    @Slot()
+    def _on_mute_toggle(self) -> None:
+        self._muted = not self._muted
+        self._engine.set_mute(self._muted)
+        if self._muted:
+            self._mute_btn.setText("Unmute")
+            self._mute_btn.setProperty("class", "muted")
+        else:
+            self._mute_btn.setText("Mute")
+            self._mute_btn.setProperty("class", "mute")
+        self._mute_btn.style().unpolish(self._mute_btn)
+        self._mute_btn.style().polish(self._mute_btn)
+
+    # ── Chain rebuild / restart sequence (Section 4.6) ────────────────────────
+
+    def _trigger_restart(self) -> None:
+        """
+        Universal restart: disable UI → stop → rebuild → start → re-enable.
+        Runs synchronously on the GUI thread (audio join blocks briefly; accepted).
+        """
+        if self._restarting:
+            return
+        self._restarting = True
+        self._set_ui_interactive(False)
+        self._restart_banner.setVisible(True)
+
+        # Process pending events so the banner renders before we block
+        from PySide6.QtWidgets import QApplication
+        QApplication.processEvents()
+
+        try:
+            was_running = self._engine.running
+            self._stop_engine()          # capture + close editors + stop
+
+            # Rebuild chain (inline; worker-thread path used for preset loads)
+            chain = self._build_chain_objects(self._chain_desc)
+            self._engine.set_chain(chain)
+
+            if was_running:
+                self._start_engine()
+        finally:
+            self._restarting = False
+            self._restart_banner.setVisible(False)
+            self._set_ui_interactive(True)
+
+    def _set_ui_interactive(self, enabled: bool) -> None:
+        self._settings_btn.setEnabled(enabled)
+        self._add_btn.setEnabled(enabled)
+        self._start_btn.setEnabled(enabled and not self._engine.running)
+        self._stop_btn.setEnabled(enabled and self._engine.running)
+        for slot in self._slot_widgets():
+            slot.set_interactive(enabled)
+
+    # ── Chain description management ──────────────────────────────────────────
+
+    def _capture_live_state(self) -> None:
+        """
+        Read raw_state from live plugins back into _chain_desc.
+        ONLY safe to call after engine is confirmed stopped — enforced by
+        calling this before engine.stop() in _stop_engine().
+        This is the save-before-stop invariant.
+        """
+        # We capture BEFORE stop() — engine is still running but we read
+        # raw_state from the Pedalboard objects in the chain.
+        # Audio thread is still alive here, but raw_state is a property read
+        # on the Pedalboard object; the audio thread only calls __call__ on it,
+        # so this is safe at the Python level (GIL protects the attribute read).
+        chain = self._engine._active_chain
+        for i, entry in enumerate(chain):
+            if i >= len(self._chain_desc):
+                break
+            board = entry[0]
+            for plugin in board:
+                try:
+                    import base64
+                    raw = plugin.raw_state
+                    self._chain_desc[i]["raw_state"] = (
+                        base64.b64encode(raw).decode() if raw else None
+                    )
+                    self._chain_desc[i]["bypassed"] = bool(entry[1])
+                except Exception as e:
+                    log.warning("Could not capture raw_state for slot %d: %s", i, e)
+
+    def _build_chain_objects(self, desc: list[dict]) -> list:
+        """
+        Instantiate Pedalboard objects from chain description.
+        Returns list of [Pedalboard, bypass_flag].
+        """
+        from pedalboard import Pedalboard, load_plugin
+        import base64
+
+        chain = []
+        for item in desc:
+            path = item.get("path", "")
+            if not os.path.exists(path):
+                log.warning("Plugin not found, skipping: %s", path)
+                QMessageBox.warning(
+                    self, "Plugin Not Found",
+                    f"Plugin '{item.get('name', path)}' was not found in ./vst3 and has been skipped."
+                )
+                continue
+            try:
+                log.info("Loading plugin: %s", path)
+                plugin = load_plugin(path)
+
+                raw_b64 = item.get("raw_state")
+                if raw_b64:
+                    log.info("Restoring state for plugin: %s (%s)", item.get("name"), path)
+                    try:
+                        plugin.raw_state = base64.b64decode(raw_b64)
+                    except Exception as e:
+                        log.error("State restore failed for %s: %s", item.get("name"), e)
+
+                board = Pedalboard([plugin])
+                chain.append([board, bool(item.get("bypassed", False))])
+            except Exception as e:
+                log.error("Failed to load plugin %s: %s", path, e)
+                QMessageBox.warning(
+                    self, "Plugin Load Failed",
+                    f"Could not load '{item.get('name', path)}':\n{e}\n\nSlot will be skipped."
+                )
+        return chain
+
+    # ── Chain UI ──────────────────────────────────────────────────────────────
+
+    def _rebuild_chain_ui(self) -> None:
+        """Rebuild the slot widgets from _chain_desc."""
+        # Remove old slots (not the empty label or add button)
+        for slot in self._slot_widgets():
+            self._chain_layout.removeWidget(slot)
+            slot.deleteLater()
+
+        self._empty_chain_lbl.setVisible(len(self._chain_desc) == 0)
+
+        for i, item in enumerate(self._chain_desc):
+            slot = PluginSlot(i, item.get("name", "?"), item.get("bypassed", False))
+            slot.move_up.connect(self._on_move_up)
+            slot.move_down.connect(self._on_move_down)
+            slot.bypass_toggled.connect(self._on_bypass_toggled)
+            slot.remove.connect(self._on_remove_plugin)
+            slot.open_editor.connect(self._on_open_editor)
+            # Insert before the add button (last item in layout)
+            self._chain_layout.insertWidget(self._chain_layout.count() - 1, slot)
+
+    def _slot_widgets(self) -> list:
+        result = []
+        for i in range(self._chain_layout.count()):
+            item = self._chain_layout.itemAt(i)
+            if item and isinstance(item.widget(), PluginSlot):
+                result.append(item.widget())
+        return result
+
+    @Slot()
+    def _on_add_plugin(self) -> None:
+        paths = scan_vst3()
+        if not paths:
+            QMessageBox.information(self, "MicHost", "No plugins found in ./vst3.")
+            return
+
+        names = [os.path.splitext(os.path.basename(p))[0] for p in paths]
+        # Filter already-loaded paths
+        loaded = {d["path"] for d in self._chain_desc}
+        available = [(n, p) for n, p in zip(names, paths)]  # allow duplicates
+
+        choice, ok = QInputDialog.getItem(
+            self, "Add Plugin", "Select plugin:", [n for n, _ in available],
+            editable=False
+        )
+        if not ok or not choice:
+            return
+
+        idx = [n for n, _ in available].index(choice)
+        path = available[idx][1]
+        self._chain_desc.append({
+            "path": path,
+            "name": os.path.splitext(os.path.basename(path))[0],
+            "bypassed": False,
+            "raw_state": None,
+        })
+        self._rebuild_chain_ui()
+        self._trigger_restart()
+
+    @Slot(int)
+    def _on_move_up(self, index: int) -> None:
+        if index <= 0:
+            return
+        self._chain_desc.insert(index - 1, self._chain_desc.pop(index))
+        self._rebuild_chain_ui()
+        self._trigger_restart()
+
+    @Slot(int)
+    def _on_move_down(self, index: int) -> None:
+        if index >= len(self._chain_desc) - 1:
+            return
+        self._chain_desc.insert(index + 1, self._chain_desc.pop(index))
+        self._rebuild_chain_ui()
+        self._trigger_restart()
+
+    @Slot(int, bool)
+    def _on_bypass_toggled(self, index: int, bypassed: bool) -> None:
+        if 0 <= index < len(self._chain_desc):
+            self._chain_desc[index]["bypassed"] = bypassed
+        # Live command — no restart needed
+        self._engine.set_bypass(index, bypassed)
+
+    @Slot(int)
+    def _on_remove_plugin(self, index: int) -> None:
+        if 0 <= index < len(self._chain_desc):
+            self._chain_desc.pop(index)
+            self._rebuild_chain_ui()
+            self._trigger_restart()
+
+    # ── Plugin editor windows (Section 8.4) ───────────────────────────────────
+
+    @Slot(int)
+    def _on_open_editor(self, index: int) -> None:
+        if not _WIN32_AVAILABLE:
+            QMessageBox.information(
+                self, "Editor",
+                "pywin32 is not installed — plugin editor windows require it.\n"
+                "Install with: pip install pywin32"
+            )
+            return
+
+        # Prevent duplicate editors
+        existing = self._editor_registry.get(index)
+        if existing and existing[0].is_alive():
+            log.info("Editor for slot %d already open.", index)
+            return
+
+        chain = self._engine._active_chain
+        if index >= len(chain):
+            return
+        board = chain[index][0]
+        plugins = list(board)
+        if not plugins:
+            return
+        plugin = plugins[0]
+
+        # Snapshot existing windows before spawning
+        handles_before = set()
+        win32gui.EnumWindows(lambda h, _: handles_before.add(h), None)
+
+        # Spawn editor thread
+        def run_editor():
+            try:
+                plugin.show_editor()
+            except Exception as e:
+                log.error("Editor for slot %d raised: %s", index, e)
+
+        t = threading.Thread(target=run_editor, daemon=True)
+        t.start()
+        self._editor_registry[index] = (t, None)
+
+        # Capture HWND via snapshot-diff (poll for new window)
+        def capture_hwnd():
+            import time
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                time.sleep(0.01)
+                current = set()
+                win32gui.EnumWindows(lambda h, _: current.add(h), None)
+                new = current - handles_before
+                if new:
+                    hwnd = next(iter(new))
+                    log.info("Captured editor HWND %d for slot %d.", hwnd, index)
+                    # Update registry entry — GIL-safe tuple replace
+                    thread = self._editor_registry[index][0]
+                    self._editor_registry[index] = (thread, hwnd)
+                    return
+            log.warning("Could not capture editor HWND for slot %d (timeout).", index)
+
+        hwnd_thread = threading.Thread(target=capture_hwnd, daemon=True)
+        hwnd_thread.start()
+
+    def _close_all_editors(self) -> None:
+        """Send WM_CLOSE to all open editors and join threads (Section 8.4)."""
+        if not _WIN32_AVAILABLE:
+            return
+        for slot, (thread, hwnd) in list(self._editor_registry.items()):
+            if hwnd is not None:
+                try:
+                    win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                except Exception as e:
+                    log.warning("WM_CLOSE failed for slot %d: %s", slot, e)
+            thread.join(timeout=2.0)
+        self._editor_registry.clear()
+
+    # ── Presets ───────────────────────────────────────────────────────────────
+
+    def _load_presets(self) -> None:
+        """Populate preset combo from ./presets/. Create 'Default' if empty."""
+        import json, glob
+        preset_dir = "./presets"
+        os.makedirs(preset_dir, exist_ok=True)
+        files = sorted(glob.glob(os.path.join(preset_dir, "*.json")))
+
+        self._presets: dict[str, dict] = {}  # name → data dict
+
+        for f in files:
+            try:
+                with open(f) as fh:
+                    data = json.load(fh)
+                name = data.get("name") or os.path.splitext(os.path.basename(f))[0]
+                self._presets[name] = data
+            except Exception as e:
+                log.warning("Could not load preset %s: %s", f, e)
+
+        if not self._presets:
+            self._presets["Default"] = {"version": 1, "name": "Default", "chain": []}
+            self._save_preset_to_disk("Default", self._presets["Default"])
+
+        self._preset_combo.blockSignals(True)
+        self._preset_combo.clear()
+        for name in self._presets:
+            self._preset_combo.addItem(name)
+        self._preset_combo.blockSignals(False)
+
+        # Load first preset into chain
+        first = next(iter(self._presets.values()))
+        self._apply_preset_data(first, from_startup=True)
+
+    def _apply_preset_data(self, data: dict, from_startup: bool = False) -> None:
+        self._chain_desc = list(data.get("chain", []))
+        self._rebuild_chain_ui()
+        if not from_startup and self._engine.running:
+            self._trigger_restart()
+
+    @Slot(int)
+    def _on_preset_selected(self, index: int) -> None:
+        if index < 0:
+            return
+        name = self._preset_combo.itemText(index)
+        data = self._presets.get(name)
+        if not data:
+            return
+
+        if self._engine.running:
+            resp = QMessageBox.question(
+                self, "Load Preset",
+                f"Load preset '{name}'? This will briefly stop the engine.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                # Revert combo without triggering signal
+                self._preset_combo.blockSignals(True)
+                self._preset_combo.setCurrentText(self._current_preset_name())
+                self._preset_combo.blockSignals(False)
+                return
+
+        self._apply_preset_data(data)
+
+    def _current_preset_name(self) -> str:
+        return self._preset_combo.currentText()
+
+    @Slot()
+    def _new_preset(self) -> None:
+        name, ok = QInputDialog.getText(self, "New Preset", "Preset name:")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
+        self._presets[name] = data
+        self._save_preset_to_disk(name, data)
+        self._preset_combo.addItem(name)
+        self._preset_combo.setCurrentText(name)
+
+    @Slot()
+    def _save_preset_as(self) -> None:
+        name, ok = QInputDialog.getText(
+            self, "Save Preset As", "Preset name:",
+            text=self._current_preset_name()
+        )
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
+        self._presets[name] = data
+        self._save_preset_to_disk(name, data)
+        if self._preset_combo.findText(name) < 0:
+            self._preset_combo.addItem(name)
+        self._preset_combo.setCurrentText(name)
+
+    @Slot()
+    def _rename_preset(self) -> None:
+        old_name = self._current_preset_name()
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Preset", "New name:", text=old_name
+        )
+        if not ok or not new_name.strip() or new_name == old_name:
+            return
+        new_name = new_name.strip()
+        data = self._presets.pop(old_name)
+        data["name"] = new_name
+        self._presets[new_name] = data
+        self._delete_preset_file(old_name)
+        self._save_preset_to_disk(new_name, data)
+        idx = self._preset_combo.findText(old_name)
+        if idx >= 0:
+            self._preset_combo.setItemText(idx, new_name)
+
+    @Slot()
+    def _delete_preset(self) -> None:
+        name = self._current_preset_name()
+        if len(self._presets) <= 1:
+            QMessageBox.information(self, "MicHost", "Cannot delete the last preset.")
+            return
+        resp = QMessageBox.question(
+            self, "Delete Preset", f"Delete preset '{name}'?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if resp != QMessageBox.Yes:
+            return
+        self._presets.pop(name, None)
+        self._delete_preset_file(name)
+        idx = self._preset_combo.findText(name)
+        if idx >= 0:
+            self._preset_combo.removeItem(idx)
+
+        if not self._presets:
+            data = {"version": 1, "name": "Default", "chain": []}
+            self._presets["Default"] = data
+            self._save_preset_to_disk("Default", data)
+            self._preset_combo.addItem("Default")
+            self._preset_combo.setCurrentText("Default")
+
+    def _save_preset_to_disk(self, name: str, data: dict) -> None:
+        import json, re
+        safe = re.sub(r'[^\w\- ]', '_', name)
+        path = os.path.join("./presets", f"{safe}.json")
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+        except OSError as e:
+            log.error("Could not save preset %s: %s", name, e)
+
+    def _delete_preset_file(self, name: str) -> None:
+        import json, re, glob
+        safe = re.sub(r'[^\w\- ]', '_', name)
+        path = os.path.join("./presets", f"{safe}.json")
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError as e:
+            log.warning("Could not delete preset file %s: %s", path, e)
+
+    # ── Meter polling ─────────────────────────────────────────────────────────
+
+    def _setup_meter_timer(self) -> None:
+        self._meter_timer = QTimer(self)
+        self._meter_timer.setInterval(33)   # ~30 Hz
+        self._meter_timer.timeout.connect(self._poll_meters)
+        self._meter_timer.start()
+
+    @Slot()
+    def _poll_meters(self) -> None:
+        if not self._engine.meter_q:
+            return
+        payload = self._engine.meter_q[-1]
+
+        self._in_gauge.update_level(payload["input"]["peak"])
+        self._out_gauge.update_level(payload["master"]["peak"])
+
+        slots = self._slot_widgets()
+        for i, m in enumerate(payload.get("plugins", [])):
+            if i < len(slots):
+                slots[i].update_gauge(m["peak"])
+
+        self._xrun_lbl.setText(f"xruns: {self._engine.xrun_count}")
+
+    # ── Close event (graceful shutdown, Section 11) ───────────────────────────
+
+    def closeEvent(self, event) -> None:
+        self._shutdown_requested = True
+        self._set_ui_interactive(False)
+        self._close_all_editors()
+        if self._engine.running:
+            self._capture_live_state()
+            self._engine.stop()
+        # Read raw_state and save session (Module 5 will add full persistence here)
+        save_settings(self._settings)
+        log.info("Shutdown complete.")
+        event.accept()
