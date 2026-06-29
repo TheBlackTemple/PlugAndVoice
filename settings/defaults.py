@@ -8,11 +8,11 @@ if missing. Deleting it is safe — it regenerates with these defaults.
 SETTINGS_VERSION = 1
 
 # Paths (relative to working directory)
-SETTINGS_PATH = "./host_settings.json"
-LOG_PATH = "./host.log"
+SETTINGS_PATH = "./user_data/host_settings.json"
+LOG_PATH = "./user_data/host.log"
 VST3_DIR = "./vst3"
 PRESETS_DIR = "./presets"
-SESSION_PATH = "./session.json"
+SESSION_PATH = "./user_data/session.json"
 
 # Default settings dict — shape must match Section 6.4 schema.
 # input_device: None means "not yet configured" (first-run gate).
