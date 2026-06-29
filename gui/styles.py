@@ -276,8 +276,10 @@ class DbGauge(QWidget):
 
     def update_level(self, db: float) -> None:
         self._db = max(db, self.FLOOR_DB)
-        if db >= self.CLIP_DB:
-            self._clipped = True
+
+        # TODO: reimplement clipping with a delay, ignored for now
+        # if db >= self.CLIP_DB:
+        #     self._clipped = True
         self.update()
 
     def reset_clip(self) -> None:
@@ -292,12 +294,11 @@ class DbGauge(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
 
-        # Background
         p.fillRect(0, 0, w, h, QColor(C_GAUGE_BG))
 
-        if self._clipped:
-            p.fillRect(0, 0, w, h, QColor(C_GAUGE_CLIP))
-            return
+        # if self._clipped:
+        #     p.fillRect(0, 0, w, h, QColor(C_GAUGE_CLIP))
+        #     return
 
         db = self._db
         fill_frac = (db - self.FLOOR_DB) / (self.CLIP_DB - self.FLOOR_DB)
@@ -307,13 +308,12 @@ class DbGauge(QWidget):
         if fill_px <= 0:
             return
 
-        # Draw fill from bottom up, split by threshold bands
         bottom = h
         remaining = fill_px
+        prev_lower_db = self.FLOOR_DB
 
-        for i, (upper_db, colour) in enumerate(reversed(self.THRESHOLDS)):
-            lower_db = self.THRESHOLDS[len(self.THRESHOLDS) - i - 2][0] if i < len(self.THRESHOLDS) - 1 else self.FLOOR_DB
-            band_frac = (upper_db - lower_db) / (self.CLIP_DB - self.FLOOR_DB)
+        for upper_db, colour in self.THRESHOLDS: 
+            band_frac = (upper_db - prev_lower_db) / (self.CLIP_DB - self.FLOOR_DB)
             band_px = int(band_frac * h)
             draw_px = min(remaining, band_px)
             if draw_px > 0:
@@ -323,5 +323,6 @@ class DbGauge(QWidget):
                 remaining -= draw_px
                 if remaining <= 0:
                     break
+            prev_lower_db = upper_db
 
         p.end()
