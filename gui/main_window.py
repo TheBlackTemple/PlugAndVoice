@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._setup_meter_timer()
         self._load_presets()   # loads presets and restores last session into chain_desc
+        self._refresh_device_labels()  # populate from settings before engine starts
 
         # Startup: validate devices, optionally autostart
         self._on_startup()
@@ -464,21 +465,10 @@ class MainWindow(QMainWindow):
         self._on_engine_started()
 
     def _on_engine_started(self) -> None:
-        info = self._engine.stream_info
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
-
-        # Update info blocks
-        self._in_device_lbl.setText(info.get("input_device", "—"))
-        self._in_format_lbl.setText(
-            f"{info.get('samplerate', 0):.0f} Hz  •  "
-            f"{info.get('in_channels', 0)}ch  •  block {info.get('blocksize', 0)}"
-        )
-        self._out_device_lbl.setText(info.get("output_device", "—"))
-        self._out_format_lbl.setText(
-            f"{info.get('samplerate', 0):.0f} Hz  •  2ch"
-        )
-        self._latency_lbl.setText(f"{info.get('latency_ms', '—')} ms")
+        self._latency_lbl.setText(f"{self._engine.stream_info.get('latency_ms', '—')} ms")
+        self._refresh_device_labels()
 
     def _stop_engine(self) -> None:
         """
@@ -512,12 +502,32 @@ class MainWindow(QMainWindow):
     def _on_engine_stopped(self) -> None:
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
-        self._in_device_lbl.setText("—")
-        self._in_format_lbl.setText("—")
-        self._out_device_lbl.setText("—")
-        self._out_format_lbl.setText("—")
         self._latency_lbl.setText("— ms")
         self._xrun_lbl.setText("xruns: 0")
+        # Device labels stay populated with configured names — they are static
+        # references from settings; blanking them while stopped is confusing.
+        self._refresh_device_labels()
+
+    def _refresh_device_labels(self) -> None:
+        """Show configured device names from settings regardless of engine state."""
+        in_name  = self._settings.get("input_device")  or "—"
+        out_name = self._settings.get("output_device") or "—"
+
+        if self._engine.running:
+            info = self._engine.stream_info
+            self._in_device_lbl.setText(info.get("input_device", in_name))
+            self._in_format_lbl.setText(
+                f"{info.get('samplerate', 0):.0f} Hz  •  "
+                f"{info.get('in_channels', 0)}ch  •  block {info.get('blocksize', 0)}"
+            )
+            self._out_device_lbl.setText(info.get("output_device", out_name))
+            self._out_format_lbl.setText(f"{info.get('samplerate', 0):.0f} Hz  •  2ch")
+        else:
+            # Engine stopped — show configured names, dim format line
+            self._in_device_lbl.setText(in_name)
+            self._in_format_lbl.setText("stopped")
+            self._out_device_lbl.setText(out_name)
+            self._out_format_lbl.setText("stopped")
 
     @Slot()
     def _on_start(self) -> None:
@@ -534,6 +544,8 @@ class MainWindow(QMainWindow):
         if self._muted:
             self._mute_btn.setText("Unmute")
             self._mute_btn.setProperty("class", "muted")
+            # Immediately floor output gauge — don't wait for next poll tick
+            self._out_gauge.update_level(self._out_gauge.FLOOR_DB)
         else:
             self._mute_btn.setText("Mute")
             self._mute_btn.setProperty("class", "mute")
@@ -1083,12 +1095,24 @@ class MainWindow(QMainWindow):
         payload = self._engine.meter_q[-1]
 
         self._in_gauge.update_level(payload["input"]["peak"])
-        self._out_gauge.update_level(payload["master"]["peak"])
 
+        # Output gauge: suppress when muted — the audio is silenced at the
+        # engine level; showing residual readings would confuse users.
+        if self._muted:
+            self._out_gauge.update_level(self._out_gauge.FLOOR_DB)
+        else:
+            self._out_gauge.update_level(payload["master"]["peak"])
+
+        # Plugin gauges: suppress when bypassed — the plugin is not in signal
+        # path; showing its readings would imply it is active.
         slots = self._slot_widgets()
-        for i, m in enumerate(payload.get("plugins", [])):
-            if i < len(slots):
-                slots[i].update_gauge(m["peak"])
+        plugin_meters = payload.get("plugins", [])
+        for i, slot in enumerate(slots):
+            if i < len(plugin_meters):
+                if slot._bypassed:
+                    slot.update_gauge(slot.gauge.FLOOR_DB)
+                else:
+                    slot.update_gauge(plugin_meters[i]["peak"])
 
         self._xrun_lbl.setText(f"xruns: {self._engine.xrun_count}")
 
@@ -1142,4 +1166,3 @@ class MainWindow(QMainWindow):
 
         log.info("Shutdown complete.")
         event.accept()
-
