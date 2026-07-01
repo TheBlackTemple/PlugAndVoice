@@ -27,6 +27,8 @@ DEFAULTS: dict = {
     "output_device": None,   # None = not yet configured
     "asio": False,
     "autostart": False,
+    "last_preset": "",       # Name of last active preset; restored on startup.
+    "max_autosaves": 0,      # Per-preset autosave cap; 0 = unlimited.
 }
 
 # Sample rates shown in the settings UI as override options

@@ -30,8 +30,10 @@ Public API:
   load_session(session_path) -> list[dict]
       Load chain_desc from session JSON; returns [] on missing or corrupt file.
 
-  save_preset(name, chain_desc, presets_dir) -> str
+  save_preset(name, chain_desc, presets_dir, engine_config=None) -> str
       Write preset JSON; returns the file path.
+      Handles created_at / last_modified timestamps internally.
+      engine_config is stored as last_engine_config when provided.
 
   load_preset(path) -> dict
       Load a single preset file; raises on corrupt.
@@ -50,6 +52,7 @@ Public API:
 """
 
 import base64
+import datetime
 import glob
 import json
 import logging
@@ -151,20 +154,50 @@ def load_session(session_path: str) -> list[dict]:
 
 # ── Preset save / load / list / delete ───────────────────────────────────────
 
-def save_preset(name: str, chain_desc: list[dict], presets_dir: str) -> str:
+def save_preset(
+    name: str,
+    chain_desc: list[dict],
+    presets_dir: str,
+    engine_config: dict | None = None,
+) -> str:
     """
     Write a named preset to presets_dir. Returns the file path written.
     Uses the same atomic write + .bak strategy as session save.
+
+    Timestamps:
+      - created_at is written once on first save and preserved on all
+        subsequent writes. Its absence in existing files is tolerated.
+      - last_modified is updated on every write.
+
+    engine_config: stored as last_engine_config when provided. Callers
+      must not assume this key is present when loading older files.
     """
     os.makedirs(presets_dir, exist_ok=True)
     safe_name = _safe_filename(name)
     path = os.path.join(presets_dir, f"{safe_name}.json")
 
-    data = {
+    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    # Preserve created_at from an existing file on disk if present.
+    created_at = now
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            created_at = existing.get("created_at", now)
+        except (json.JSONDecodeError, OSError):
+            pass  # File unreadable — treat as first write
+
+    data: dict = {
         "version": SESSION_VERSION,
         "name": name,
+        "created_at": created_at,
+        "last_modified": now,
         "chain": chain_desc,
     }
+    if engine_config is not None:
+        data["last_engine_config"] = engine_config
+
     _atomic_write(path, data)
     log.info("Preset '%s' saved → %s", name, path)
     return path
@@ -247,7 +280,7 @@ def build_chain_objects(
         bypassed = bool(item.get("bypassed", False))
         raw_b64  = item.get("raw_state")
 
-        # Missing plugin check (Section 6.3)
+        # Missing plugin check 
         if not os.path.exists(path):
             log.warning("Plugin not found, skipping: %s", path)
             if on_missing:
@@ -264,7 +297,7 @@ def build_chain_objects(
                 on_load_error(name, e)
             continue
 
-        # Restore raw_state — last-words log pattern (Section 6.1)
+        # Restore raw_state — last-words log pattern
         if raw_b64:
             log.info("Restoring state for plugin: %s (%s)", name, path)
             try:
