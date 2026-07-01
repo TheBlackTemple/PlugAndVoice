@@ -42,7 +42,7 @@ from settings import (
 )
 from persistence import (
     capture_raw_state, save_session, load_session,
-    save_preset, list_presets, delete_preset,
+    save_preset, load_preset, list_presets, delete_preset,
     build_chain_objects,
 )
 from .styles import DbGauge, C_TEXT_WARN
@@ -421,7 +421,7 @@ class MainWindow(QMainWindow):
 
     # ── Engine start / stop ───────────────────────────────────────────────────
 
-    def _start_engine(self, chain_desc: list[dict]=None) -> None:
+    def _start_engine(self) -> None:
         srate = self._settings.get("samplerate")
         if srate is None:
             # Resolve device native rate
@@ -455,7 +455,7 @@ class MainWindow(QMainWindow):
 
         # Build chain on the main thread (Pedalboard requires it).
         chain = build_chain_objects(
-            chain_desc or self._chain_desc,
+            self._chain_desc,
             on_missing=on_missing,
             on_load_error=on_load_error,
             shutdown_flag=self._shutdown_event
@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
 
     # ── Chain rebuild / restart sequence (Section 4.6, 9-step mandatory order) ──
 
-    def _trigger_restart(self, new_settings: dict = None) -> None:
+    def _trigger_restart(self, new_settings: dict = None, new_chain: dict = None) -> None:
         """
         Universal restart — the single path for all structural changes and
         reconfiguration. Follows the mandatory 9-step order.
@@ -602,10 +602,14 @@ class MainWindow(QMainWindow):
             self._stop_engine()
 
             # TODO: refactor?
-            save_session(self._chain_desc, SESSION_PATH)
             
             if new_settings:
                 save_settings(new_settings)
+
+            if new_chain:
+                self._chain_desc = new_chain
+            
+            save_session(self._chain_desc, SESSION_PATH)
 
             # Pedalboard's load_plugin() has the same main-thread requirement as
             # show_editor() — it must not be called from a worker thread.
@@ -911,12 +915,6 @@ class MainWindow(QMainWindow):
 
         self._rebuild_chain_ui()
 
-    def _apply_preset_data(self, data: dict, from_startup: bool = False) -> None:
-        self._chain_desc = list(data.get("chain", []))
-        self._rebuild_chain_ui()
-        if not from_startup and self._engine.running:
-            self._trigger_restart()
-
     @Slot(int)
     def _on_preset_selected(self, index: int) -> None:
         if index < 0:
@@ -939,7 +937,14 @@ class MainWindow(QMainWindow):
                 self._preset_combo.blockSignals(False)
                 return
 
-        self._apply_preset_data(data)
+        self._apply_preset_by_name(name)
+        
+    
+    def _apply_preset_by_name(self, name: str) -> None:
+        log.info("Applying preset: " + PRESETS_DIR + "/" + name + ".json")
+        new_chain = load_preset(PRESETS_DIR + "/" + name + ".json").get("chain", [])
+
+        self._trigger_restart(new_chain=new_chain)
 
     def _current_preset_name(self) -> str:
         return self._preset_combo.currentText()
