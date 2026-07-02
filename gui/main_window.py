@@ -978,7 +978,7 @@ class MainWindow(QMainWindow):
         if self._preset_combo.findText(name) < 0:
             self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
-        self._trigger_restart(save_preset=data)
+        self._trigger_restart(new_preset=data)
 
     @Slot()
     def _save_preset(self, data : dict) -> None:
