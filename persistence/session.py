@@ -63,7 +63,7 @@ import tempfile
 
 log = logging.getLogger(__name__)
 
-SESSION_VERSION = 1
+SESSION_VERSION = 2
 
 
 # ── raw_state capture ─────────────────────────────────────────────────────────

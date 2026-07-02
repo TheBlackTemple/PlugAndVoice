@@ -5,7 +5,7 @@ The settings file is human-readable JSON, generated on first launch
 if missing. Deleting it is safe — it regenerates with these defaults.
 """
 
-SETTINGS_VERSION = 1
+SETTINGS_VERSION = 2
 
 # Paths (relative to working directory)
 SETTINGS_PATH = "./user_data/host_settings.json"
