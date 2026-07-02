@@ -578,7 +578,7 @@ class MainWindow(QMainWindow):
 
     # ── Chain rebuild / restart sequence (Section 4.6, 9-step mandatory order) ──
 
-    def _trigger_restart(self, new_settings: dict = None, new_chain: dict = None) -> None:
+    def _trigger_restart(self, new_settings: dict = None, new_chain: dict = None, new_preset: dict = None) -> None:
         """
         Universal restart — the single path for all structural changes and
         reconfiguration. Follows the mandatory 9-step order.
@@ -596,19 +596,18 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         try:
-            if new_settings:
-                self._settings = new_settings
-
             self._stop_engine()
 
-            # TODO: refactor?
-            
             if new_settings:
+                self._settings = new_settings
                 save_settings(new_settings)
 
-            if new_chain:
+            if new_chain is not None:
                 self._chain_desc = new_chain
             
+            if new_preset:
+                self._save_preset(new_preset)
+
             save_session(self._chain_desc, SESSION_PATH)
 
             # Pedalboard's load_plugin() has the same main-thread requirement as
@@ -941,8 +940,8 @@ class MainWindow(QMainWindow):
         
     
     def _apply_preset_by_name(self, name: str) -> None:
-        log.info("Applying preset: " + PRESETS_DIR + "/" + name + ".json")
-        new_chain = load_preset(PRESETS_DIR + "/" + name + ".json").get("chain", [])
+        log.info("Applying preset: " + os.path.join(PRESETS_DIR, f"{name}.json"))
+        new_chain = load_preset(os.path.join(PRESETS_DIR, f"{name}.json")).get("chain", [])
 
         self._trigger_restart(new_chain=new_chain)
 
@@ -955,11 +954,15 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         name = name.strip()
-        data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
+        data = {"version": 1, "name": name, "chain": []}
+
+        self._preset_combo.blockSignals(True)
         self._presets[name] = data
-        save_preset(name, list(self._chain_desc), PRESETS_DIR)
         self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
+        self._preset_combo.blockSignals(False)
+        
+        self._trigger_restart(new_chain=[], new_preset=data)
 
     @Slot()
     def _save_preset_as(self) -> None:
@@ -972,10 +975,14 @@ class MainWindow(QMainWindow):
         name = name.strip()
         data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
         self._presets[name] = data
-        save_preset(name, list(self._chain_desc), PRESETS_DIR)
         if self._preset_combo.findText(name) < 0:
             self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
+        self._trigger_restart(save_preset=data)
+
+    @Slot()
+    def _save_preset(self, data : dict) -> None:
+        save_preset(data["name"], data["chain"], PRESETS_DIR)
 
     @Slot()
     def _rename_preset(self) -> None:
@@ -989,15 +996,20 @@ class MainWindow(QMainWindow):
         data = self._presets.pop(old_name)
         data["name"] = new_name
         self._presets[new_name] = data
+
         # Delete old file (find it by safe-name match) and write new
         import re, glob
         old_safe = re.sub(r"[^\w\- ]", "_", old_name)
         old_path = os.path.join(PRESETS_DIR, f"{old_safe}.json")
-        delete_preset(old_path)
+        
+
         save_preset(new_name, list(data.get("chain", [])), PRESETS_DIR)
+
         idx = self._preset_combo.findText(old_name)
         if idx >= 0:
             self._preset_combo.setItemText(idx, new_name)
+        delete_preset(old_path)
+
 
     @Slot()
     def _delete_preset(self) -> None:
