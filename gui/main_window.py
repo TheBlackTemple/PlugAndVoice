@@ -896,6 +896,7 @@ class MainWindow(QMainWindow):
         presets_list = list_presets(PRESETS_DIR)
 
         self._presets: dict[str, dict] = {}
+
         for data in presets_list:
             name = data.get("name", "Unnamed")
             self._presets[name] = data
@@ -907,6 +908,7 @@ class MainWindow(QMainWindow):
 
         self._preset_combo.blockSignals(True)
         self._preset_combo.clear()
+        self._preset_combo.addItem("-- Select a preset --")
         for name in self._presets:
             self._preset_combo.addItem(name)
         self._preset_combo.blockSignals(False)
@@ -986,8 +988,8 @@ class MainWindow(QMainWindow):
     @Slot()
     def _delete_preset(self) -> None:
         name = self._current_preset_name()
-        if len(self._presets) <= 1:
-            QMessageBox.information(self, "MicHost", "Cannot delete the last preset.")
+        if (name == "-- Select a preset --"):
+            QMessageBox.information(self, "MicHost", "Cannot delete this.")
             return
         resp = QMessageBox.question(
             self, "Delete Preset", f"Delete preset '{name}'?",
