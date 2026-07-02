@@ -3,7 +3,7 @@ main_window.py — MicHost main window (Section 12.2).
 
 Layout (top → bottom, mirroring signal flow):
   Management bar    — Settings button, restart indicator
-  Preset header     — current preset name, dropdown, new/save-as/rename/delete
+  Preset header     — current preset name, dropdown, new/save-as/delete
   Input block       — device info readouts + dB gauge (pre-chain)
   VST chain block   — ordered plugin slots (add, move, bypass, remove, editor)
   Output block      — device info readouts + dB gauge (master)
@@ -249,7 +249,6 @@ class MainWindow(QMainWindow):
         for label, slot in (
             ("New",     self._new_preset),
             ("Save as", self._save_preset_as),
-            ("Rename",  self._rename_preset),
             ("Delete",  self._delete_preset),
         ):
             b = QPushButton(label)
@@ -983,33 +982,6 @@ class MainWindow(QMainWindow):
     @Slot()
     def _save_preset(self, data : dict) -> None:
         save_preset(data["name"], data["chain"], PRESETS_DIR)
-
-    @Slot()
-    def _rename_preset(self) -> None:
-        old_name = self._current_preset_name()
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Preset", "New name:", text=old_name
-        )
-        if not ok or not new_name.strip() or new_name == old_name:
-            return
-        new_name = new_name.strip()
-        data = self._presets.pop(old_name)
-        data["name"] = new_name
-        self._presets[new_name] = data
-
-        # Delete old file (find it by safe-name match) and write new
-        import re, glob
-        old_safe = re.sub(r"[^\w\- ]", "_", old_name)
-        old_path = os.path.join(PRESETS_DIR, f"{old_safe}.json")
-        
-
-        save_preset(new_name, list(data.get("chain", [])), PRESETS_DIR)
-
-        idx = self._preset_combo.findText(old_name)
-        if idx >= 0:
-            self._preset_combo.setItemText(idx, new_name)
-        delete_preset(old_path)
-
 
     @Slot()
     def _delete_preset(self) -> None:
