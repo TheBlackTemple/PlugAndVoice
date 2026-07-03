@@ -397,10 +397,10 @@ class MainWindow(QMainWindow):
     def _open_settings(self, force: bool = False, device_lost: bool = False) -> None:
         view = SettingsView(self, device_lost=device_lost)
         view.settings_applied.connect(self._on_settings_applied)
-        if force:
-            view.exec()
-        else:
-            view.exec()
+        
+        # if force:
+        view.exec()
+        
 
     @Slot(dict)
     def _on_settings_applied(self, new_settings: dict) -> None:
@@ -416,6 +416,7 @@ class MainWindow(QMainWindow):
             log.info("Settings changed while engine running — triggering restart.")
 
             def mutate():
+                self._settings = new_settings
                 save_settings(new_settings)
             
             self._trigger_restart(mutate=mutate)
@@ -992,7 +993,6 @@ class MainWindow(QMainWindow):
 
         self._trigger_restart(mutate=mutate)
 
-    @Slot()
     def _save_preset(self, data : dict) -> None:
         save_preset(data["name"], data["chain"], PRESETS_DIR)
 
