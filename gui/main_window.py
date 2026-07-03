@@ -414,7 +414,11 @@ class MainWindow(QMainWindow):
 
         if self._engine.running and changed:
             log.info("Settings changed while engine running — triggering restart.")
-            self._trigger_restart()
+
+            def mutate():
+                save_settings(new_settings)
+            
+            self._trigger_restart(mutate=mutate)
         elif not self._engine.running and self._settings.get("autostart"):
             self._start_engine()
 
@@ -577,12 +581,10 @@ class MainWindow(QMainWindow):
 
     # ── Chain rebuild / restart sequence (Section 4.6, 9-step mandatory order) ──
 
-    def _trigger_restart(self, new_settings: dict = None, new_chain: dict = None, new_preset: dict = None) -> None:
+    def _trigger_restart(self, mutate: callable = None) -> None:
         """
         Universal restart — the single path for all structural changes and
         reconfiguration. Follows the mandatory 9-step order.
-
-        new_settings: if provided, applies before restarting (reconfigure path).
         """
 
         if self._restarting:
@@ -597,15 +599,8 @@ class MainWindow(QMainWindow):
         try:
             self._stop_engine()
 
-            if new_settings:
-                self._settings = new_settings
-                save_settings(new_settings)
-
-            if new_chain is not None:
-                self._chain_desc = new_chain
-            
-            if new_preset:
-                self._save_preset(new_preset)
+            if mutate is not None:
+                mutate()
 
             save_session(self._chain_desc, SESSION_PATH)
 
@@ -687,32 +682,37 @@ class MainWindow(QMainWindow):
         if not ok or not choice:
             return
 
-        idx = [n for n, _ in available].index(choice)
-        path = available[idx][1]
-        self._chain_desc.append({
-            "path": path,
-            "name": os.path.splitext(os.path.basename(path))[0],
-            "bypassed": False,
-            "raw_state": None,
-        })
-        self._rebuild_chain_ui()
-        self._trigger_restart()
+        def mutate():
+            idx = [n for n, _ in available].index(choice)
+            path = available[idx][1]
+            self._chain_desc.append({
+                "path": path,
+                "name": os.path.splitext(os.path.basename(path))[0],
+                "bypassed": False,
+                "raw_state": None,
+            })
+        
+        self._trigger_restart(mutate=mutate)
 
     @Slot(int)
     def _on_move_up(self, index: int) -> None:
         if index <= 0:
             return
-        self._chain_desc.insert(index - 1, self._chain_desc.pop(index))
-        self._rebuild_chain_ui()
-        self._trigger_restart()
+
+        def mutate():
+            self._chain_desc.insert(index - 1, self._chain_desc.pop(index))
+        
+        self._trigger_restart(mutate=mutate)
 
     @Slot(int)
     def _on_move_down(self, index: int) -> None:
         if index >= len(self._chain_desc) - 1:
             return
-        self._chain_desc.insert(index + 1, self._chain_desc.pop(index))
-        self._rebuild_chain_ui()
-        self._trigger_restart()
+
+        def mutate():
+            self._chain_desc.insert(index + 1, self._chain_desc.pop(index))
+        
+        self._trigger_restart(mutate=mutate)
 
     @Slot(int, bool)
     def _on_bypass_toggled(self, index: int, bypassed: bool) -> None:
@@ -724,9 +724,10 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _on_remove_plugin(self, index: int) -> None:
         if 0 <= index < len(self._chain_desc):
-            self._chain_desc.pop(index)
-            self._rebuild_chain_ui()
-            self._trigger_restart()
+            def mutate():
+                self._chain_desc.pop(index)
+
+            self._trigger_restart(mutate=mutate)
 
     # ── Plugin editor windows (Section 8.4) ───────────────────────────────────
     #
@@ -942,9 +943,11 @@ class MainWindow(QMainWindow):
     
     def _apply_preset_by_name(self, name: str) -> None:
         log.info("Applying preset: " + os.path.join(PRESETS_DIR, f"{name}.json"))
-        new_chain = load_preset(os.path.join(PRESETS_DIR, f"{name}.json")).get("chain", [])
 
-        self._trigger_restart(new_chain=new_chain)
+        def mutate():
+            self._chain_desc = load_preset(os.path.join(PRESETS_DIR, f"{name}.json")).get("chain", [])
+
+        self._trigger_restart(mutate=mutate)
 
     def _current_preset_name(self) -> str:
         return self._preset_combo.currentText()
@@ -963,7 +966,11 @@ class MainWindow(QMainWindow):
         self._preset_combo.setCurrentText(name)
         self._preset_combo.blockSignals(False)
         
-        self._trigger_restart(new_chain=[], new_preset=data)
+        def mutate():
+            self._chain_desc = []
+            self._save_preset(data)
+
+        self._trigger_restart(mutate=mutate)
 
     @Slot()
     def _save_preset_as(self) -> None:
@@ -979,7 +986,11 @@ class MainWindow(QMainWindow):
         if self._preset_combo.findText(name) < 0:
             self._preset_combo.addItem(name)
         self._preset_combo.setCurrentText(name)
-        self._trigger_restart(new_preset=data)
+
+        def mutate():
+            self._save_preset(data)
+
+        self._trigger_restart(mutate=mutate)
 
     @Slot()
     def _save_preset(self, data : dict) -> None:
