@@ -501,12 +501,6 @@ class MainWindow(QMainWindow):
         if not self._engine.running:
             return
 
-        try:
-            while True:
-                self._engine._command_q.get_nowait()
-        except Exception:
-            pass
-
         # Close editors, drain command_q, stop audio thread
         self._close_all_editors()
         try:
@@ -514,6 +508,7 @@ class MainWindow(QMainWindow):
                 self._engine._command_q.get_nowait()
         except Exception:
             pass
+        
         self._engine.stop()
 
         # Step 5: read raw_state — NOW safe, audio thread is confirmed dead.
