@@ -120,17 +120,25 @@ class AudioEngine:
         output_device,       # sounddevice device index or name
         samplerate: float,
         blocksize: int,
+        exclusive_mode: bool = False,   # WASAPI Private Mode; ignored on non-WASAPI
     ) -> None:
         """
         Open and start the audio stream.
         Raises on any failure — caller surfaces the error to the user.
+
+        exclusive_mode=True requests WASAPI exclusive access on both input and
+        output devices.  This lowers latency and prevents other applications from
+        accessing the raw device while the engine is running.  Has no effect when
+        the selected devices are not on the WASAPI host API.
         """
         if self._stream is not None:
             raise RuntimeError("Engine already running; call stop() first.")
 
         in_channels = self._probe_input_channels(input_device, samplerate)
 
-        # Validate before opening (Section 5.3)
+        # Validate before opening (Section 5.3).
+        # Note: extra_settings (WasapiSettings) is not supported by
+        # check_input/output_settings — we pass it only at stream open below.
         sd.check_input_settings(
             device=input_device,
             channels=in_channels,
@@ -145,7 +153,23 @@ class AudioEngine:
         self._samplerate = float(samplerate)
         self._in_channels = in_channels
 
-        self._stream = sd.Stream(
+        # Build WASAPI exclusive settings if requested.
+        # sd.WasapiSettings is only present in sounddevice builds with WASAPI
+        # support (standard on Windows); guard defensively so imports on
+        # non-Windows environments don't crash.
+        extra_settings = None
+        if exclusive_mode:
+            if hasattr(sd, "WasapiSettings"):
+                wasapi_cfg = sd.WasapiSettings(exclusive=True)
+                extra_settings = (wasapi_cfg, wasapi_cfg)
+                log.info("WASAPI exclusive mode (Private Mode) requested.")
+            else:
+                log.warning(
+                    "exclusive_mode=True but sd.WasapiSettings not available "
+                    "in this sounddevice build — falling back to shared mode."
+                )
+
+        stream_kwargs = dict(
             device=(input_device, output_device),
             samplerate=samplerate,
             blocksize=blocksize,
@@ -154,6 +178,10 @@ class AudioEngine:
             callback=self._callback,
             finished_callback=self._on_stream_finished,
         )
+        if extra_settings is not None:
+            stream_kwargs["extra_settings"] = extra_settings
+
+        self._stream = sd.Stream(**stream_kwargs)
 
         # Post-open assertion (Section 5.3)
         actual_in = self._stream.channels[0]
@@ -179,15 +207,17 @@ class AudioEngine:
             "in_channels": actual_in,
             "out_channels": actual_out,
             "latency_ms": round(blocksize / samplerate * 1000, 2),
+            "exclusive_mode": extra_settings is not None,
         }
 
         log.info(
             "Engine started — in: %s (%dch) | out: %s (2ch) | "
-            "%g Hz | block %d (%.1f ms)",
+            "%g Hz | block %d (%.1f ms) | exclusive: %s",
             in_info["name"], actual_in,
             out_info["name"],
             samplerate, blocksize,
             self.stream_info["latency_ms"],
+            self.stream_info["exclusive_mode"],
         )
 
     def stop(self) -> None:

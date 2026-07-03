@@ -473,6 +473,7 @@ class MainWindow(QMainWindow):
                 output_device=out_entry.index,
                 samplerate=srate,
                 blocksize=blocksize,
+                exclusive_mode=self._settings.get("exclusive_mode", False),
             )
         except Exception as e:
             log.error("Engine start failed: %s", e)
@@ -508,7 +509,7 @@ class MainWindow(QMainWindow):
                 self._engine._command_q.get_nowait()
         except Exception:
             pass
-        
+
         self._engine.stop()
 
         # Step 5: read raw_state — NOW safe, audio thread is confirmed dead.

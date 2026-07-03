@@ -5,7 +5,7 @@ The settings file is human-readable JSON, generated on first launch
 if missing. Deleting it is safe — it regenerates with these defaults.
 """
 
-SETTINGS_VERSION = 2
+SETTINGS_VERSION = 3
 
 # Paths (relative to working directory)
 SETTINGS_PATH = "./user_data/host_settings.json"
@@ -29,6 +29,7 @@ DEFAULTS: dict = {
     "autostart": False,
     "last_preset": "",       # Name of last active preset; restored on startup.
     "max_autosaves": 0,      # Per-preset autosave cap; 0 = unlimited.
+    "exclusive_mode": False, # WASAPI exclusive mode (Private Mode); False = shared.
 }
 
 # Sample rates shown in the settings UI as override options

@@ -17,7 +17,8 @@ Signals:
 
 import logging
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QGroupBox, QLabel, QMessageBox,
@@ -144,6 +145,23 @@ class SettingsView(QDialog):
             )
         fmt_form.addRow("", self._asio_check)
 
+        # Private Mode (WASAPI exclusive) toggle
+        self._exclusive_check = QCheckBox("Enable Private Mode  (WASAPI Exclusive)")
+        self._exclusive_check.setToolTip(
+            "Captures your mic exclusively for MicHost — lower latency, "
+            "no other app can listen in. Requires WASAPI devices on both sides."
+        )
+        self._exclusive_check.stateChanged.connect(self._on_exclusive_toggled)
+
+        self._exclusive_warn = QLabel("⚠  Private Mode requires WASAPI devices on both input and output.")
+        self._exclusive_warn.setProperty("class", "warn")
+        self._exclusive_warn.setVisible(False)
+        exclusive_col = QVBoxLayout()
+        exclusive_col.setSpacing(2)
+        exclusive_col.addWidget(self._exclusive_check)
+        exclusive_col.addWidget(self._exclusive_warn)
+        fmt_form.addRow("", exclusive_col)
+
         root.addWidget(fmt_group)
 
         # ── Remember / autostart ──────────────────────────────────────────────
@@ -210,6 +228,24 @@ class SettingsView(QDialog):
         # ASIO
         self._asio_check.setChecked(bool(self._current_settings.get("asio", False)))
 
+        # Private Mode — restore saved value, then gate on current device selection.
+        # Connect combo signals here (after combos are populated) so that
+        # _update_exclusive_gate fires whenever the user changes either device.
+        # Use a flag to guard against double-connecting on refresh_devices() calls.
+        # PySide6 emits a RuntimeWarning (not RuntimeError) on a failed disconnect,
+        # so try/except is not reliable here — the flag is the correct pattern.
+        if getattr(self, "_gate_signals_connected", False):
+            self._in_combo.currentIndexChanged.disconnect(self._update_exclusive_gate)
+            self._out_combo.currentIndexChanged.disconnect(self._update_exclusive_gate)
+        self._in_combo.currentIndexChanged.connect(self._update_exclusive_gate)
+        self._out_combo.currentIndexChanged.connect(self._update_exclusive_gate)
+        self._gate_signals_connected = True
+
+        self._exclusive_check.setChecked(
+            bool(self._current_settings.get("exclusive_mode", False))
+        )
+        self._update_exclusive_gate()
+
         # Remember / autostart
         self._remember_check.setChecked(bool(self._current_settings.get("autostart", False)))
 
@@ -230,6 +266,105 @@ class SettingsView(QDialog):
                 if d and d.index == suggestion.index:
                     combo.setCurrentIndex(i)
                     return
+
+    # ── Private Mode gating ───────────────────────────────────────────────────
+
+    def _on_exclusive_toggled(self, state: int) -> None:
+        """
+        Show the explanation dialog when the user checks Private Mode.
+        If they cancel, silently uncheck the box.
+        No dialog shown when unchecking — that's always safe.
+        """
+        if state == Qt.Checked:
+            confirmed = self._show_private_mode_dialog()
+            if not confirmed:
+                self._exclusive_check.blockSignals(True)
+                self._exclusive_check.setChecked(False)
+                self._exclusive_check.blockSignals(False)
+
+    def _update_exclusive_gate(self) -> None:
+        """
+        Enable the Private Mode checkbox only when both selected devices are
+        WASAPI.  If either is not WASAPI, disable and uncheck silently.
+        Show/hide the inline warning accordingly.
+        """
+        in_entry  = self._in_combo.currentData()
+        out_entry = self._out_combo.currentData()
+
+        both_wasapi = (
+            in_entry is not None and in_entry.is_wasapi and
+            out_entry is not None and out_entry.is_wasapi
+        )
+
+        self._exclusive_check.setEnabled(both_wasapi)
+        self._exclusive_warn.setVisible(not both_wasapi)
+
+        if not both_wasapi:
+            # Block signals so unchecking here doesn't trigger any stateChanged
+            # handler the caller might add later.
+            self._exclusive_check.blockSignals(True)
+            self._exclusive_check.setChecked(False)
+            self._exclusive_check.blockSignals(False)
+
+    def _show_private_mode_dialog(self) -> bool:
+        """
+        Show the Private Mode explanation dialog.
+        Returns True if the user confirmed, False if they cancelled.
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🔒 Private Mode — Exclusive Mic Capture")
+        dlg.setMinimumWidth(480)
+        dlg.setModal(True)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        # Main explanation
+        body = QLabel(
+            "<b>MicHost will take direct, exclusive control of your microphone.</b>"
+            "<br><br>"
+            "✅ &nbsp;<b>Lower latency</b> — the signal goes straight to MicHost, "
+            "no shared audio stack in the way.<br>"
+            "✅ &nbsp;<b>Fully private</b> — no other app can intercept or listen "
+            "to your raw mic while the engine is running."
+            "<br><br>"
+            "⚠️ &nbsp;<b>Your raw mic will be unavailable to other apps</b> while "
+            "the engine is active. Video calls, browsers, and recording software "
+            "won't be able to see it."
+            "<br><br>"
+            "<b>This is expected</b> — your processed audio is already on VB-Cable. "
+            "Point other apps there instead of your mic."
+        )
+        body.setWordWrap(True)
+        body.setTextFormat(Qt.RichText)
+        layout.addWidget(body)
+
+        # YouTube link
+        link = QLabel(
+            '📺 &nbsp;<a href="https://www.youtube.com/results?search_query='
+            'change+microphone+input+discord+obs+vb+cable">'
+            "Not sure how to do that? Watch a quick guide →</a>"
+        )
+        link.setTextFormat(Qt.RichText)
+        link.setOpenExternalLinks(True)
+        layout.addWidget(link)
+
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        layout.addWidget(sep)
+
+        # Buttons
+        btns = QDialogButtonBox()
+        enable_btn = btns.addButton("Enable Private Mode", QDialogButtonBox.AcceptRole)
+        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        result = dlg.exec()
+        return result == QDialog.Accepted
 
     # ── Inline warnings ───────────────────────────────────────────────────────
 
@@ -298,6 +433,7 @@ class SettingsView(QDialog):
         new_settings["samplerate"]    = rate_data       # None → device native
         new_settings["blocksize"]     = block_data
         new_settings["asio"]          = self._asio_check.isChecked()
+        new_settings["exclusive_mode"] = self._exclusive_check.isChecked()
         new_settings["autostart"]     = autostart
 
         # Persist immediately (device selection is the slow/error path;
