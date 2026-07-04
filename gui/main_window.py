@@ -532,6 +532,20 @@ class MainWindow(QMainWindow):
         # references from settings; blanking them while stopped is confusing.
         self._refresh_device_labels()
 
+    def _on_stream_died(self) -> None:
+        """
+        Called on the main thread (via QTimer.singleShot) when the watchdog
+        detects an unexpected stream death — most commonly WASAPI exclusive mode
+        being reclaimed by Windows (system sounds, driver keepalive, power events).
+
+        _trigger_restart() is the correct path: it handles capture_raw_state,
+        session save, editor cleanup, restart banner, and the _restarting guard.
+        _stop_engine() inside it will proceed correctly because _stream is still
+        set (just inactive), so running returns True.
+        """
+        log.warning("Engine stream died unexpectedly — triggering auto-restart.")
+        self._trigger_restart()
+
     def _refresh_device_labels(self) -> None:
         """Show configured device names from settings regardless of engine state."""
         in_name  = self._settings.get("input_device")  or "—"
@@ -1028,6 +1042,15 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _poll_meters(self) -> None:
+        # Watchdog: finished_callback sets stream_died when the stream dies
+        # unexpectedly (WASAPI exclusive reclaim, device loss, driver event).
+        # We catch it here on the main thread — the only safe place to restart.
+        if self._engine.stream_died and not self._restarting:
+            log.warning("Watchdog: stream_died detected — auto-restarting engine.")
+            self._engine.stream_died = False   # clear immediately to prevent re-entry
+            QTimer.singleShot(0, self._on_stream_died)
+            return
+
         if not self._engine.meter_q:
             return
         payload = self._engine.meter_q[-1]

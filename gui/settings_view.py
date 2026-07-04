@@ -333,6 +333,8 @@ class SettingsView(QDialog):
             "the engine is active. Video calls, browsers, and recording software "
             "won't be able to see it."
             "<br><br>"
+            "For best results, disable power management on your audio devices in Device Manager."
+            "<br><br>"
             "<b>This is expected</b> — your processed audio is already on VB-Cable. "
             "Point other apps there instead of your mic."
         )

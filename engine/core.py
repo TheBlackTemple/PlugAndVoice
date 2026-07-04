@@ -17,6 +17,7 @@ Public interface (the contract the GUI depends on):
   xrun_count            — readable int
   meter_q               — collections.deque(maxlen=1)
   stream_info           — dict with device/format/samplerate/channels once started
+  stream_died           — bool set by finished_callback when stream dies unexpectedly
 """
 
 import queue
@@ -76,6 +77,7 @@ class AudioEngine:
         self.xrun_count: int = 0          # GIL-atomic; written by audio thread only
         self.meter_q: deque = deque(maxlen=1)
         self.stream_info: dict = {}
+        self.stream_died: bool = False     # set by finished_callback; cleared on start/stop
 
         # Internal state
         self._stream: sd.Stream | None = None
@@ -131,6 +133,7 @@ class AudioEngine:
         accessing the raw device while the engine is running.  Has no effect when
         the selected devices are not on the WASAPI host API.
         """
+        self.stream_died = False
         if self._stream is not None:
             raise RuntimeError("Engine already running; call stop() first.")
 
@@ -228,6 +231,7 @@ class AudioEngine:
         if self._stream is None:
             return
         log.info("Engine stopping…")
+        self.stream_died = False   # clear before stop so watchdog doesn't fire on manual stop
         self._stream.stop()   # blocks until callback returns for the last time
         self._stream.close()
         self._stream = None
@@ -322,7 +326,18 @@ class AudioEngine:
                 chain[idx][1] = cmd.bypassed
 
     def _on_stream_finished(self) -> None:
-        log.debug("sounddevice stream finished callback fired.")
+        # Called by sounddevice's internal thread when the stream stops for any
+        # reason — including unexpected device loss or WASAPI exclusive reclaim.
+        # If stream_died is already False it means stop() cleared it first,
+        # meaning this was a clean/manual stop — don't flag it.
+        # If stop() hasn't run yet, stream_died will still be False here
+        # (it's only set True below), so we check _stream instead.
+        if self._stream is not None and self._stream.active is False:
+            # Stream went inactive but we didn't call stop() — unexpected death.
+            log.warning("Stream finished unexpectedly — flagging stream_died.")
+            self.stream_died = True
+        else:
+            log.debug("sounddevice stream finished callback fired (clean stop).")
 
     # ------------------------------------------------------------------
     # Internal helpers
