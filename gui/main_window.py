@@ -982,7 +982,6 @@ class MainWindow(QMainWindow):
         self._presets[name] = data
         if self._preset_combo.findText(name) < 0:
             self._preset_combo.addItem(name)
-        self._preset_combo.setCurrentText(name)
 
         def mutate():
             self._save_preset(data)
