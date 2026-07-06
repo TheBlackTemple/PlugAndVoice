@@ -56,6 +56,10 @@ log = logging.getLogger(__name__)
 # 500ms is ~94 missed callbacks — far beyond any legitimate scheduling jitter.
 _CALLBACK_STALL_TIMEOUT = 0.5
 
+# Maximum consecutive watchdog-triggered restart attempts before giving up.
+# Prevents an infinite restart loop when the device is persistently unavailable.
+_MAX_RESTART_ATTEMPTS = 3
+
 # Optional: pywin32 for editor window management
 try:
     import win32gui
@@ -172,6 +176,7 @@ class MainWindow(QMainWindow):
         self._shutdown_event         = threading.Event()   # signals worker threads to abort
         self._restarting             = False
         self._muted                  = False
+        self._restart_attempts       = 0     # consecutive watchdog-triggered restart attempts
 
         self._build_ui()
         self._setup_meter_timer()
@@ -488,6 +493,7 @@ class MainWindow(QMainWindow):
         self._on_engine_started()
 
     def _on_engine_started(self) -> None:
+        self._restart_attempts = 0     # device recovered successfully — reset watchdog counter
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
         self._refresh_device_labels()
@@ -538,12 +544,29 @@ class MainWindow(QMainWindow):
           B) callback stall  — stream reports running but callback stopped firing
              (WASAPI driver lock, plugin deadlock, hardware buffer spin)
 
-        _trigger_restart() is the correct path: it handles capture_raw_state,
-        session save, editor cleanup, restart banner, and the _restarting guard.
-        _stop_engine() inside it will proceed correctly because _stream is still
-        set (just inactive or stalled), so running returns True.
+        Tracks consecutive attempts to prevent an infinite restart loop when the
+        device is persistently unavailable (e.g. still hung after recovery attempt).
+        _restart_attempts is reset to 0 by _on_engine_started() on a clean start.
         """
-        log.warning("Engine recovery triggered — calling _trigger_restart().")
+        self._restart_attempts += 1
+
+        if self._restart_attempts > _MAX_RESTART_ATTEMPTS:
+            log.error(
+                "Engine failed to recover after %d consecutive attempts — giving up.",
+                _MAX_RESTART_ATTEMPTS,
+            )
+            self._restart_attempts = 0
+            QMessageBox.critical(
+                self, "MicHost",
+                f"Audio engine could not recover after {_MAX_RESTART_ATTEMPTS} attempts.\n\n"
+                "Please check your audio device and restart the app."
+            )
+            return
+
+        log.warning(
+            "Engine recovery attempt %d/%d — calling _trigger_restart().",
+            self._restart_attempts, _MAX_RESTART_ATTEMPTS,
+        )
         self._trigger_restart()
 
     def _refresh_device_labels(self) -> None:
