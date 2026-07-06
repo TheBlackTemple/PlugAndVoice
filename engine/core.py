@@ -93,6 +93,11 @@ class AudioEngine:
         # Flags written only by the main thread before start/stop;
         # read by the callback — no lock needed (GIL + assignment atomicity).
         self._muted: bool = False
+        self._stopping_cleanly: bool = False  # set by stop() to distinguish clean vs unexpected stream death
+
+        # Last xrun flag string — GIL-atomic string assign in callback, read by GUI via meter payload.
+        # Retains the most recent non-clean status for diagnostics (e.g. "output underflow").
+        self._last_xrun_flags: str = ""
 
         # Captured at stream open; read by callback (immutable during streaming).
         self._samplerate: float = 48000.0
@@ -214,6 +219,7 @@ class AudioEngine:
             "in_channels": actual_in,
             "out_channels": actual_out,
             "latency_ms": round(blocksize / samplerate * 1000, 2),
+            "actual_output_latency_ms": round(self._stream.latency[1] * 1000, 2),
             "exclusive_mode": extra_settings is not None,
         }
 
@@ -235,10 +241,11 @@ class AudioEngine:
         if self._stream is None:
             return
         log.info("Engine stopping…")
-        self.stream_died = False   # clear before stop so watchdog doesn't fire on manual stop
-        self._stream.stop()   # blocks until callback returns for the last time
+        self._stopping_cleanly = True          # tell finished_callback this is intentional
+        self._stream.stop()                    # blocks until callback returns for the last time
         self._stream.close()
         self._stream = None
+        self._stopping_cleanly = False
         self.stream_info = {}
         log.info("Engine stopped.")
 
@@ -264,9 +271,12 @@ class AudioEngine:
         #    time.monotonic() is lock-free and safe to call from the audio thread.
         self.last_callback_time = time.monotonic()
 
-        # 1. xrun monitoring — increment only, never block or print
+        # 1. xrun monitoring — increment only, never block or print.
+        #    str(status) is a GIL-atomic assign; surfaced in meter payload for GUI diagnostics.
+        #    Retains last non-clean value so the GUI can distinguish overload from device loss.
         if status:
             self.xrun_count += 1
+            self._last_xrun_flags = str(status)
 
         # 2. Drain commands — fast, non-blocking, O(1) per command
         #    SimpleQueue.get_nowait() raises queue.Empty when empty.
@@ -286,7 +296,9 @@ class AudioEngine:
         else:
             buffer = _to_pb_stereo(indata)
 
-        # Defend against unexpected shape (Section 5.3)
+        # Defend against unexpected shape (Section 5.3).
+        # log.error is acceptable here — this guard fires at most once before returning
+        # silence and is not a hot path. It would only trigger on a programming error.
         if buffer.shape[0] != 2:
             log.error("Unexpected buffer shape after orient: %s", buffer.shape)
             outdata[:] = 0
@@ -315,6 +327,7 @@ class AudioEngine:
             "input": input_meter,
             "plugins": plugin_meters,
             "master": master_meter,
+            "xrun_flags": self._last_xrun_flags,  # "" when clean; "output underflow" etc. on xrun
         }
         # deque(maxlen=1) append is atomic and never blocks
         self.meter_q.append(payload)
@@ -337,12 +350,9 @@ class AudioEngine:
     def _on_stream_finished(self) -> None:
         # Called by sounddevice's internal thread when the stream stops for any
         # reason — including unexpected device loss or WASAPI exclusive reclaim.
-        # If stream_died is already False it means stop() cleared it first,
-        # meaning this was a clean/manual stop — don't flag it.
-        # If stop() hasn't run yet, stream_died will still be False here
-        # (it's only set True below), so we check _stream instead.
-        if self._stream is not None and self._stream.active is False:
-            # Stream went inactive but we didn't call stop() — unexpected death.
+        # _stopping_cleanly is set by stop() before it calls _stream.stop(), so
+        # by the time this fires we can reliably distinguish intentional vs unexpected.
+        if not self._stopping_cleanly:
             log.warning("Stream finished unexpectedly — flagging stream_died.")
             self.stream_died = True
         else:
@@ -362,7 +372,8 @@ class AudioEngine:
             info = sd.query_devices(device, kind="input")
             native = int(info.get("max_input_channels", 1))
             return min(native, 2)
-        except Exception:
+        except Exception as exc:
             # If we can't query, try mono — the check_input_settings call will
             # raise with a clear error if the device rejects it.
+            log.debug("Could not probe input channels for %r: %s — defaulting to mono", device, exc)
             return 1

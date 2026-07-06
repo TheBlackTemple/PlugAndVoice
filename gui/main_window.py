@@ -275,10 +275,13 @@ class MainWindow(QMainWindow):
         info = QVBoxLayout()
         self._in_device_lbl  = QLabel("—")
         self._in_format_lbl  = QLabel("—")
+        self._in_latency_lbl = QLabel("—")
         self._in_device_lbl.setProperty("class", "mono")
         self._in_format_lbl.setProperty("class", "dim")
+        self._in_latency_lbl.setProperty("class", "dim")
         info.addWidget(self._in_device_lbl)
         info.addWidget(self._in_format_lbl)
+        info.addWidget(self._in_latency_lbl)
         info.addStretch()
         layout.addLayout(info, stretch=1)
         return box
@@ -352,15 +355,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._mute_btn)
 
         layout.addStretch()
-
-        self._latency_lbl = QLabel("— ms")
-        self._latency_lbl.setProperty("class", "readout")
-        self._latency_lbl.setToolTip("Nominal latency (blocksize / samplerate × 1000)")
-        layout.addWidget(self._latency_lbl)
-
-        sep = QLabel("|")
-        sep.setProperty("class", "dim")
-        layout.addWidget(sep)
 
         self._xrun_lbl = QLabel("xruns: 0")
         self._xrun_lbl.setProperty("class", "dim")
@@ -496,7 +490,6 @@ class MainWindow(QMainWindow):
     def _on_engine_started(self) -> None:
         self._start_btn.setEnabled(False)
         self._stop_btn.setEnabled(True)
-        self._latency_lbl.setText(f"{self._engine.stream_info.get('latency_ms', '—')} ms")
         self._refresh_device_labels()
         self._rebuild_chain_ui()
 
@@ -533,7 +526,6 @@ class MainWindow(QMainWindow):
     def _on_engine_stopped(self) -> None:
         self._start_btn.setEnabled(True)
         self._stop_btn.setEnabled(False)
-        self._latency_lbl.setText("— ms")
         self._xrun_lbl.setText("xruns: 0")
         # Device labels stay populated with configured names — they are static
         # references from settings; blanking them while stopped is confusing.
@@ -566,6 +558,7 @@ class MainWindow(QMainWindow):
                 f"{info.get('samplerate', 0):.0f} Hz  •  "
                 f"{info.get('in_channels', 0)}ch  •  block {info.get('blocksize', 0)}"
             )
+            self._in_latency_lbl.setText(f"{self._engine.stream_info.get('actual_output_latency_ms', '—')} ms")
             self._out_device_lbl.setText(info.get("output_device", out_name))
             self._out_format_lbl.setText(f"{info.get('samplerate', 0):.0f} Hz  •  2ch")
         else:

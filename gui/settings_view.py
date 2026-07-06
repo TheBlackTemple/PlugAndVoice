@@ -184,7 +184,7 @@ class SettingsView(QDialog):
         # Private Mode (WASAPI exclusive) toggle
         self._exclusive_check = QCheckBox("Enable Private Mode  (WASAPI Exclusive)")
         self._exclusive_check.setToolTip(
-            "Captures your mic exclusively for MicHost — lower latency, "
+            "Captures your mic exclusively for MicHost, "
             "no other app can listen in. Requires WASAPI devices on both sides."
         )
         self._exclusive_check.stateChanged.connect(self._on_exclusive_toggled)
@@ -441,10 +441,11 @@ class SettingsView(QDialog):
         body = QLabel(
             "<b>MicHost will take direct, exclusive control of your microphone.</b>"
             "<br><br>"
-            "✅ &nbsp;<b>Lower latency</b> — the signal goes straight to MicHost, "
-            "no shared audio stack in the way.<br>"
             "✅ &nbsp;<b>Fully private</b> — no other app can intercept or listen "
             "to your raw mic while the engine is running."
+            "<br><br>"
+            "⚠️ &nbsp;<b>Latency</b> — the signal goes straight to MicHost, "
+            "<b>latency times can improve or worsen depending on your microphone drivers.</b>"
             "<br><br>"
             "⚠️ &nbsp;<b>Your raw mic will be unavailable to other apps</b> while "
             "the engine is active. Video calls, browsers, and recording software "
