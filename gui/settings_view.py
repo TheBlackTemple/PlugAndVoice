@@ -241,9 +241,11 @@ class SettingsView(QDialog):
         self._out_combo.currentIndexChanged.connect(self._update_exclusive_gate)
         self._gate_signals_connected = True
 
+        self._exclusive_check.blockSignals(True)
         self._exclusive_check.setChecked(
             bool(self._current_settings.get("exclusive_mode", False))
         )
+        self._exclusive_check.blockSignals(False)
         self._update_exclusive_gate()
 
         # Remember / autostart
@@ -275,7 +277,7 @@ class SettingsView(QDialog):
         If they cancel, silently uncheck the box.
         No dialog shown when unchecking — that's always safe.
         """
-        if state == Qt.Checked:
+        if self._exclusive_check.isChecked():
             confirmed = self._show_private_mode_dialog()
             if not confirmed:
                 self._exclusive_check.blockSignals(True)
@@ -283,11 +285,6 @@ class SettingsView(QDialog):
                 self._exclusive_check.blockSignals(False)
 
     def _update_exclusive_gate(self) -> None:
-        """
-        Enable the Private Mode checkbox only when both selected devices are
-        WASAPI.  If either is not WASAPI, disable and uncheck silently.
-        Show/hide the inline warning accordingly.
-        """
         in_entry  = self._in_combo.currentData()
         out_entry = self._out_combo.currentData()
 
@@ -299,9 +296,8 @@ class SettingsView(QDialog):
         self._exclusive_check.setEnabled(both_wasapi)
         self._exclusive_warn.setVisible(not both_wasapi)
 
-        if not both_wasapi:
-            # Block signals so unchecking here doesn't trigger any stateChanged
-            # handler the caller might add later.
+        if not both_wasapi and self._exclusive_check.isChecked():
+            # Only uncheck if it's actually checked — avoids spurious signal suppression
             self._exclusive_check.blockSignals(True)
             self._exclusive_check.setChecked(False)
             self._exclusive_check.blockSignals(False)
@@ -333,9 +329,9 @@ class SettingsView(QDialog):
             "the engine is active. Video calls, browsers, and recording software "
             "won't be able to see it."
             "<br><br>"
-            "For best results, disable power management on your audio devices in Device Manager."
+            "⚠️ &nbsp;For best results, disable power management on your audio devices in Device Manager."
             "<br><br>"
-            "<b>This is expected</b> — your processed audio is already on VB-Cable. "
+            "Remember,<b> — your new output device is VB-Cable Output</b> or whichever you decide in settings."
             "Point other apps there instead of your mic."
         )
         body.setWordWrap(True)
@@ -344,9 +340,10 @@ class SettingsView(QDialog):
 
         # YouTube link
         link = QLabel(
+            'Not sure how to do that?'
             '📺 &nbsp;<a href="https://www.youtube.com/results?search_query='
             'change+microphone+input+discord+obs+vb+cable">'
-            "Not sure how to do that? Watch a quick guide →</a>"
+            " Watch a quick guide →</a>"
         )
         link.setTextFormat(Qt.RichText)
         link.setOpenExternalLinks(True)
