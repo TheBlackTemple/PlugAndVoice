@@ -6,12 +6,21 @@ touches the engine; this is pure query/classification logic consumed by both
 the settings GUI and the startup validation gate.
 
 Public API:
-  enumerate_devices() -> list[dict]
+  enumerate_devices() -> list[DeviceEntry]
       Full device list, host-API-qualified, preserving duplicates (Section 8.1).
 
+  rank_input_candidates(devices, all_apis=False) -> list[DeviceEntry]
+      Up to 3 ranked input suggestions, WASAPI-only by default (Section 8.2).
+
+  rank_output_candidates(devices, all_apis=False) -> list[DeviceEntry]
+      Up to 3 ranked output suggestions, WASAPI-only by default (Section 8.2).
+
   suggest_devices(devices) -> SuggestedDevices
-      Heuristic best-guess for input and output (Section 8.2).
-      Returns names only — the GUI presents them as suggestions, not auto-picks.
+      Convenience wrapper: returns top input + output candidate as a pair.
+      Used by headless harness and refresh_devices(); GUI uses rank_* directly.
+
+  validate_pair(in_dev, out_dev) -> PairValidation
+      Per-change conflict check: loopback, cross-API mismatch, no VB-Cable.
 
   find_device_by_name(name, devices) -> dict | None
       Exact-name lookup against an enumerated list.
@@ -32,6 +41,7 @@ Public API:
 import logging
 import os
 from dataclasses import dataclass, field
+from enum import Enum
 
 log = logging.getLogger(__name__)
 
@@ -89,13 +99,43 @@ class DeviceEntry:
 @dataclass
 class SuggestedDevices:
     """
-    Heuristic suggestions for input and output device.
+    Convenience pair of top input/output candidates.
+    Used by the headless harness and refresh_devices(); the GUI uses
+    rank_input_candidates / rank_output_candidates directly.
     Both may be None if no good candidate is found.
     These are SUGGESTIONS presented to the user, not auto-selections.
     """
     input: DeviceEntry | None = None
     output: DeviceEntry | None = None
     vbcable_missing: bool = False
+
+
+class PairSeverity(Enum):
+    OK   = "ok"    # green — safe to apply
+    WARN = "warn"  # amber — works but user should know
+    BLOCK = "block" # red  — do not allow Apply
+
+
+@dataclass
+class PairValidation:
+    """
+    Result of validate_pair(in_dev, out_dev).
+    Checked live on every combo change; blocks Apply when severity is BLOCK.
+    """
+    severity: PairSeverity
+    message: str
+
+    @property
+    def ok(self) -> bool:
+        return self.severity == PairSeverity.OK
+
+    @property
+    def warn(self) -> bool:
+        return self.severity == PairSeverity.WARN
+
+    @property
+    def block(self) -> bool:
+        return self.severity == PairSeverity.BLOCK
 
 
 @dataclass
@@ -176,82 +216,194 @@ def _is_vbcable_name(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Device suggestion (Section 8.2)
+# Ranked candidates (Section 8.2)
+# ---------------------------------------------------------------------------
+
+def rank_input_candidates(
+    devices: list[DeviceEntry],
+    all_apis: bool = False,
+) -> list[DeviceEntry]:
+    """
+    Return ranked input device candidates.
+
+    Ranking order:
+      1. WASAPI + mic-like name  (best)
+      2. WASAPI, any input, not VB-Cable
+      3. Any input, not VB-Cable  (only reachable when all_apis=True or no WASAPI found)
+
+    When all_apis=False (default): WASAPI entries only, capped at _MAX_CANDIDATES.
+    When all_apis=True: full enumeration, all matching entries, no cap —
+      used by the "Show all audio APIs" power toggle so nothing is hidden.
+
+    VB-Cable inputs are excluded regardless of mode; they are loopback
+    devices, not mic sources.
+    """
+    pool = [d for d in devices if d.is_input and not d.is_vbcable]
+
+    if not all_apis:
+        wasapi_pool = [d for d in pool if d.is_wasapi]
+        # If no WASAPI inputs at all, fall through to full pool so the
+        # user isn't left with an empty combo on non-WASAPI systems.
+        if wasapi_pool:
+            pool = wasapi_pool
+
+    mic_kw = ("mic", "microphone", "input")
+
+    # Partition into tiers then flatten, preserving stable order within each.
+    tier1 = [d for d in pool if d.is_wasapi and _name_suggests_mic(d.name, mic_kw)]
+    tier2 = [d for d in pool if d.is_wasapi and d not in tier1]
+    tier3 = [d for d in pool if not d.is_wasapi]
+
+    ranked = tier1 + tier2 + tier3
+    log.debug("rank_input_candidates → %d entries (all_apis=%s)", len(ranked), all_apis)
+    return ranked
+
+
+def rank_output_candidates(
+    devices: list[DeviceEntry],
+    all_apis: bool = False,
+) -> list[DeviceEntry]:
+    """
+    Return ranked output device candidates.
+
+    Ranking order:
+      1. VB-Cable WASAPI output  (best — silent routing to DAW/Discord)
+      2. VB-Cable non-WASAPI output
+      3. Non-VB-Cable WASAPI output  (flagged warn at pair-validation time)
+      4. Any other output  (only reachable when all_apis=True or no WASAPI found)
+
+    When all_apis=False (default): WASAPI entries only, capped at _MAX_CANDIDATES.
+    When all_apis=True: full enumeration, all matching entries, no cap —
+      used by the "Show all audio APIs" power toggle so nothing is hidden.
+    """
+    pool = [d for d in devices if d.is_output]
+
+    if not all_apis:
+        wasapi_pool = [d for d in pool if d.is_wasapi]
+        if wasapi_pool:
+            pool = wasapi_pool
+
+    tier1 = [d for d in pool if d.is_vbcable and d.is_wasapi]
+    tier2 = [d for d in pool if d.is_vbcable and not d.is_wasapi]
+    tier3 = [d for d in pool if not d.is_vbcable and d.is_wasapi]
+    tier4 = [d for d in pool if not d.is_vbcable and not d.is_wasapi]
+
+    ranked = tier1 + tier2 + tier3 + tier4
+    log.debug("rank_output_candidates → %d entries (all_apis=%s)", len(ranked), all_apis)
+    return ranked
+
+
+# ---------------------------------------------------------------------------
+# Pair validation (live, per-change)
+# ---------------------------------------------------------------------------
+
+def validate_pair(
+    in_dev: DeviceEntry | None,
+    out_dev: DeviceEntry | None,
+) -> PairValidation:
+    """
+    Check the selected input+output pair for known broken or degraded states.
+
+    Called on every combo change in the settings GUI; result drives the
+    status indicator and gates the Apply button.
+
+    Severity rules (first match wins):
+      BLOCK — same device index (certain feedback loop)
+      BLOCK — same bare device name (physical loopback even across host APIs)
+      BLOCK — both are VB-Cable (VB-Cable → VB-Cable loops back silently)
+      BLOCK — cross-API pairing with exclusive mode implied (MME in, WASAPI out
+               or vice versa): stream will fail to open at engine start
+      WARN  — output is not VB-Cable (audio exits to speakers; other apps
+               won't receive the processed signal)
+      WARN  — mismatched host APIs when both are non-VB-Cable real devices
+               (works but latency alignment is undefined)
+      OK    — WASAPI in, VB-Cable WASAPI out, no conflicts
+    """
+    if in_dev is None or out_dev is None:
+        return PairValidation(
+            severity=PairSeverity.WARN,
+            message="Select both an input and an output device.",
+        )
+
+    # ── BLOCK cases ──────────────────────────────────────────────────────────
+
+    if in_dev.index == out_dev.index:
+        return PairValidation(
+            severity=PairSeverity.BLOCK,
+            message="Input and output are the same device — this will cause a feedback loop.",
+        )
+
+    if in_dev.name.lower() == out_dev.name.lower():
+        return PairValidation(
+            severity=PairSeverity.BLOCK,
+            message=(
+                f'"{in_dev.name}" is the same physical device on different drivers — '
+                "pick one API or use separate devices."
+            ),
+        )
+
+    if in_dev.is_vbcable and out_dev.is_vbcable:
+        return PairValidation(
+            severity=PairSeverity.BLOCK,
+            message="Both devices are VB-Cable — audio will loop back on itself silently.",
+        )
+
+    if in_dev.is_wasapi != out_dev.is_wasapi:
+        # WASAPI and MME cannot share a stream; engine.start() will fail.
+        in_api  = "WASAPI" if in_dev.is_wasapi  else in_dev.host_api
+        out_api = "WASAPI" if out_dev.is_wasapi else out_dev.host_api
+        return PairValidation(
+            severity=PairSeverity.BLOCK,
+            message=(
+                f"Input ({in_api}) and output ({out_api}) use different audio drivers — "
+                "both must use the same API. Switch to WASAPI on both sides."
+            ),
+        )
+
+    # ── WARN cases ───────────────────────────────────────────────────────────
+
+    if not out_dev.is_vbcable:
+        return PairValidation(
+            severity=PairSeverity.WARN,
+            message=(
+                "Output is a real speaker or headphone — processed audio will play "
+                "out loud. Other apps won't receive the signal. "
+                "Install VB-Cable to route silently."
+            ),
+        )
+
+    # ── OK ───────────────────────────────────────────────────────────────────
+
+    return PairValidation(
+        severity=PairSeverity.OK,
+        message="Looks good.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrapper (used by headless harness / refresh_devices)
 # ---------------------------------------------------------------------------
 
 def suggest_devices(devices: list[DeviceEntry]) -> SuggestedDevices:
     """
-    Return heuristic device suggestions:
+    Return the top-ranked input and output candidate as a convenience pair.
 
-    Input suggestion:
-      - WASAPI shared, has input channels, not VB-Cable.
-      - Prefer devices whose name suggests a microphone
-        (contains "mic", "microphone", "input").
-      - Fall back to any WASAPI input, then any input.
-
-    Output suggestion:
-      - VB-Cable output, prefer WASAPI entry when name appears multiple times.
-      - Fall back to any output if no VB-Cable found.
-
-    These are SUGGESTIONS only. The caller (GUI or headless harness) presents
-    them to the user; it does not auto-apply them.
+    The GUI uses rank_input_candidates / rank_output_candidates directly to
+    populate dropdowns; this wrapper exists for the headless harness and for
+    refresh_devices() which only needs the single best pick.
     """
-    inputs = [d for d in devices if d.is_input and not d.is_vbcable]
-    outputs = [d for d in devices if d.is_output]
+    inputs  = rank_input_candidates(devices)
+    outputs = rank_output_candidates(devices)
 
-    suggested_in = _pick_input(inputs)
-    suggested_out, vbcable_missing = _pick_output(outputs)
+    suggested_in  = inputs[0]  if inputs  else None
+    suggested_out = outputs[0] if outputs else None
+    vbcable_missing = not vbcable_present(devices)
 
     return SuggestedDevices(
         input=suggested_in,
         output=suggested_out,
         vbcable_missing=vbcable_missing,
     )
-
-
-def _pick_input(inputs: list[DeviceEntry]) -> DeviceEntry | None:
-    if not inputs:
-        return None
-
-    mic_keywords = ("mic", "microphone", "input")
-
-    # 1. WASAPI + mic-like name
-    wasapi_mic = [
-        d for d in inputs
-        if d.is_wasapi and _name_suggests_mic(d.name, mic_keywords)
-    ]
-    if wasapi_mic:
-        return wasapi_mic[0]
-
-    # 2. Any WASAPI input
-    wasapi_any = [d for d in inputs if d.is_wasapi]
-    if wasapi_any:
-        return wasapi_any[0]
-
-    # 3. Any input
-    return inputs[0]
-
-
-def _pick_output(outputs: list[DeviceEntry]) -> tuple[DeviceEntry | None, bool]:
-    """Returns (suggested_output, vbcable_missing)."""
-    vbcable_outputs = [d for d in outputs if d.is_vbcable]
-
-    if not vbcable_outputs:
-        # No VB-Cable found — suggest first available output, flag warning
-        fallback = outputs[0] if outputs else None
-        return fallback, True
-
-    # Prefer WASAPI VB-Cable entry
-    wasapi_vb = [d for d in vbcable_outputs if d.is_wasapi]
-    if wasapi_vb:
-        return wasapi_vb[0], False
-
-    return vbcable_outputs[0], False
-
-
-def _name_suggests_mic(name: str, keywords: tuple) -> bool:
-    name_lower = name.lower()
-    return any(kw in name_lower for kw in keywords)
 
 
 # ---------------------------------------------------------------------------
@@ -270,11 +422,9 @@ def find_device_by_name(name: str, devices: list[DeviceEntry]) -> DeviceEntry | 
     if not name:
         return None
     name_lower = name.lower()
-    # Exact qualified match
     for d in devices:
         if d.qualified.lower() == name_lower:
             return d
-    # Bare name match (fallback)
     for d in devices:
         if d.name.lower() == name_lower:
             return d
@@ -292,10 +442,10 @@ def validate_devices(settings: dict, devices: list[DeviceEntry]) -> ValidationRe
     Returns a ValidationResult with ok=True only if both are found.
     A None configured device is treated as missing (unconfigured = not valid).
     """
-    in_name = settings.get("input_device") or ""
+    in_name  = settings.get("input_device")  or ""
     out_name = settings.get("output_device") or ""
 
-    in_found = find_device_by_name(in_name, devices) is not None if in_name else False
+    in_found  = find_device_by_name(in_name,  devices) is not None if in_name  else False
     out_found = find_device_by_name(out_name, devices) is not None if out_name else False
 
     result = ValidationResult(
@@ -371,3 +521,12 @@ def scan_vst3(vst3_dir: str = VST3_DIR) -> list[str]:
     found.sort()
     log.debug("VST3 scan found %d plugin(s) in %s", len(found), vst3_dir)
     return found
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _name_suggests_mic(name: str, keywords: tuple) -> bool:
+    name_lower = name.lower()
+    return any(kw in name_lower for kw in keywords)

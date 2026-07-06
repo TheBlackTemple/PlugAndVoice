@@ -28,8 +28,12 @@ from .devices import (
     DeviceEntry,
     SuggestedDevices,
     ValidationResult,
+    PairSeverity,
     enumerate_devices,
     suggest_devices,
+    rank_input_candidates,
+    rank_output_candidates,
+    validate_pair,
     find_device_by_name,
     validate_devices,
     asio_available,
@@ -51,8 +55,9 @@ __all__ = [
     # io
     "setup_logging", "load_settings", "save_settings", "ensure_dirs",
     # devices
-    "DeviceEntry", "SuggestedDevices", "ValidationResult",
+    "DeviceEntry", "SuggestedDevices", "ValidationResult", "PairSeverity",
     "enumerate_devices", "suggest_devices", "find_device_by_name",
+    "rank_input_candidates", "rank_output_candidates", "validate_pair",
     "validate_devices", "asio_available", "vbcable_present", "scan_vst3",
     # defaults
     "DEFAULTS", "SETTINGS_PATH", "LOG_PATH", "VST3_DIR", "PRESETS_DIR",
