@@ -18,10 +18,12 @@ Public interface (the contract the GUI depends on):
   meter_q               — collections.deque(maxlen=1)
   stream_info           — dict with device/format/samplerate/channels once started
   stream_died           — bool set by finished_callback when stream dies unexpectedly
+  last_callback_time    — float monotonic timestamp, written at top of every callback
 """
 
 import queue
 import logging
+import time
 import numpy as np
 import sounddevice as sd
 
@@ -78,6 +80,7 @@ class AudioEngine:
         self.meter_q: deque = deque(maxlen=1)
         self.stream_info: dict = {}
         self.stream_died: bool = False     # set by finished_callback; cleared on start/stop
+        self.last_callback_time: float = 0.0  # monotonic; written at top of every callback
 
         # Internal state
         self._stream: sd.Stream | None = None
@@ -134,6 +137,7 @@ class AudioEngine:
         the selected devices are not on the WASAPI host API.
         """
         self.stream_died = False
+        self.last_callback_time = time.monotonic()  # reset so watchdog gap on startup is clean
         if self._stream is not None:
             raise RuntimeError("Engine already running; call stop() first.")
 
@@ -254,6 +258,11 @@ class AudioEngine:
         time_info,
         status,
     ) -> None:
+
+        # 0. Heartbeat — written unconditionally before any processing.
+        #    The GUI watchdog checks this to detect a stalled callback.
+        #    time.monotonic() is lock-free and safe to call from the audio thread.
+        self.last_callback_time = time.monotonic()
 
         # 1. xrun monitoring — increment only, never block or print
         if status:

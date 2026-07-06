@@ -25,6 +25,7 @@ Editor windows (Section 8.4):
 import logging
 import os
 import threading
+import time
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
@@ -49,6 +50,11 @@ from .styles import DbGauge, C_TEXT_WARN
 from .settings_view import SettingsView
 
 log = logging.getLogger(__name__)
+
+# Heartbeat watchdog threshold.
+# At 48kHz/256 frames the callback fires every ~5.3ms.
+# 500ms is ~94 missed callbacks — far beyond any legitimate scheduling jitter.
+_CALLBACK_STALL_TIMEOUT = 0.5
 
 # Optional: pywin32 for editor window management
 try:
@@ -534,16 +540,17 @@ class MainWindow(QMainWindow):
 
     def _on_stream_died(self) -> None:
         """
-        Called on the main thread (via QTimer.singleShot) when the watchdog
-        detects an unexpected stream death — most commonly WASAPI exclusive mode
-        being reclaimed by Windows (system sounds, driver keepalive, power events).
+        Common handler for both watchdog paths:
+          A) stream_died flag — stream finished unexpectedly (device reclaim, loss)
+          B) callback stall  — stream reports running but callback stopped firing
+             (WASAPI driver lock, plugin deadlock, hardware buffer spin)
 
         _trigger_restart() is the correct path: it handles capture_raw_state,
         session save, editor cleanup, restart banner, and the _restarting guard.
         _stop_engine() inside it will proceed correctly because _stream is still
-        set (just inactive), so running returns True.
+        set (just inactive or stalled), so running returns True.
         """
-        log.warning("Engine stream died unexpectedly — triggering auto-restart.")
+        log.warning("Engine recovery triggered — calling _trigger_restart().")
         self._trigger_restart()
 
     def _refresh_device_labels(self) -> None:
@@ -1042,14 +1049,34 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _poll_meters(self) -> None:
-        # Watchdog: finished_callback sets stream_died when the stream dies
-        # unexpectedly (WASAPI exclusive reclaim, device loss, driver event).
-        # We catch it here on the main thread — the only safe place to restart.
+        # Watchdog A: stream_died — finished_callback flagged an unexpected death
+        # (WASAPI exclusive reclaim, device loss, driver event).
         if self._engine.stream_died and not self._restarting:
-            log.warning("Watchdog: stream_died detected — auto-restarting engine.")
-            self._engine.stream_died = False   # clear immediately to prevent re-entry
+            log.warning("Watchdog A: stream_died detected — auto-restarting engine.")
+            self._engine.stream_died = False
             QTimer.singleShot(0, self._on_stream_died)
             return
+
+        # Watchdog B: callback heartbeat stall — the stream reports as running
+        # but the callback has stopped making progress (WASAPI driver lock,
+        # plugin deadlock, hardware buffer spin). Detected by a monotonic
+        # timestamp written at step 0 of every callback invocation.
+        # Only arm this check once the engine is running and has had at least
+        # one callback fire (last_callback_time > 0).
+        if (
+            self._engine.running
+            and not self._restarting
+            and self._engine.last_callback_time > 0
+            and (time.monotonic() - self._engine.last_callback_time) > _CALLBACK_STALL_TIMEOUT
+        ):
+            log.warning(
+                "Watchdog B: callback stall detected (%.2fs since last heartbeat) "
+                "— auto-restarting engine.",
+                time.monotonic() - self._engine.last_callback_time,
+            )
+            QTimer.singleShot(0, self._on_stream_died)
+            return
+
 
         if not self._engine.meter_q:
             return
