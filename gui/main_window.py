@@ -414,7 +414,8 @@ class MainWindow(QMainWindow):
             new_settings.get("input_device")  != self._settings.get("input_device") or
             new_settings.get("output_device") != self._settings.get("output_device") or
             new_settings.get("samplerate")    != self._settings.get("samplerate") or
-            new_settings.get("blocksize")     != self._settings.get("blocksize")
+            new_settings.get("blocksize")     != self._settings.get("blocksize") or
+            new_settings.get("exclusive_mode")     != self._settings.get("exclusive_mode")
         )
         self._settings = new_settings
 
