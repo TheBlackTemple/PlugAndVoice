@@ -558,7 +558,11 @@ class MainWindow(QMainWindow):
                 f"{info.get('samplerate', 0):.0f} Hz  •  "
                 f"{info.get('in_channels', 0)}ch  •  block {info.get('blocksize', 0)}"
             )
-            self._in_latency_lbl.setText(f"{self._engine.stream_info.get('actual_output_latency_ms', '—')} ms")
+            
+            driver_ms = self._engine.stream_info.get("actual_output_latency_ms", 0)
+            mode = "private" if self._engine.stream_info.get("exclusive_mode") else "shared"
+            self._in_latency_lbl.setText(f"Driver buffer: {driver_ms:.1f} ms ({mode})")
+
             self._out_device_lbl.setText(info.get("output_device", out_name))
             self._out_format_lbl.setText(f"{info.get('samplerate', 0):.0f} Hz  •  2ch")
         else:
