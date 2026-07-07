@@ -4,10 +4,10 @@ main_window.py — MicHost main window (Section 12.2).
 Layout (top → bottom, mirroring signal flow):
   Management bar    — Settings button, restart indicator
   Preset header     — current preset name, dropdown, new/save-as/delete
-  Input block       — device info readouts + dB gauge (pre-chain)
+  Input block       — device info readouts + dB gauge (pre-chain) + driver latency reported
   VST chain block   — ordered plugin slots (add, move, bypass, remove, editor)
   Output block      — device info readouts + dB gauge (master)
-  Footer            — Start / Stop / Mute  |  latency  |  xrun counter
+  Footer            — Start / Stop / Mute  | xrun counter
 
 Engine interaction:
   - Never calls engine methods directly from signal handlers; all calls are
@@ -45,6 +45,7 @@ from persistence import (
     capture_raw_state, save_session, load_session,
     save_preset, load_preset, list_presets, delete_preset,
     build_chain_objects,
+    write_autosave, list_autosaves, load_autosave,
 )
 from .styles import DbGauge, C_TEXT_WARN
 from .settings_view import SettingsView
@@ -228,6 +229,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addStretch()
 
+        self._autosaves_btn = QPushButton("🕓  Autosaves")
+        self._autosaves_btn.clicked.connect(self._open_autosaves)
+        layout.addWidget(self._autosaves_btn)
+
         self._settings_btn = QPushButton("⚙  Settings")
         self._settings_btn.clicked.connect(self._open_settings)
         layout.addWidget(self._settings_btn)
@@ -407,6 +412,28 @@ class MainWindow(QMainWindow):
         view.exec()
         
 
+    @Slot()
+    def _open_autosaves(self) -> None:
+        dlg = AutosaveDialog(self)
+        dlg.exec()
+
+    @Slot()
+    def _load_autosave_chain(self, chain_desc: list[dict]) -> None:
+        """Apply a chain loaded from an autosave (called by AutosaveDialog)."""
+        if self._engine.running:
+            resp = QMessageBox.question(
+                self, "Load Autosave",
+                "Load this autosave? This will briefly stop the engine.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+
+        def mutate():
+            self._chain_desc = chain_desc
+
+        self._trigger_restart(mutate=mutate)
+
     @Slot(dict)
     def _on_settings_applied(self, new_settings: dict) -> None:
         changed = (
@@ -524,8 +551,7 @@ class MainWindow(QMainWindow):
         #         is alive risks a data race at the native level.
         capture_raw_state(self._chain_desc, self._engine._active_chain)
 
-        # TODO: we should make autosave here
-        # we only use session for restarts
+        write_autosave(self._chain_desc, self._settings.get("max_autosaves", 0))
 
         self._on_engine_stopped()
 
@@ -1150,3 +1176,131 @@ class MainWindow(QMainWindow):
 
         log.info("Shutdown complete.")
         event.accept()
+
+# ── Autosave browser dialog ───────────────────────────────────────────────────
+
+class AutosaveDialog(QDialog):
+    """
+    Modal dialog for browsing and loading autosaves.
+
+    Shows a sortable list of autosave entries (newest-first by default).
+    User selects one entry and clicks Load, or cancels.
+    Loading delegates back to MainWindow._load_autosave_chain().
+    """
+
+    def __init__(self, parent: "MainWindow"):
+        super().__init__(parent)
+        self._main = parent
+        self._sort_ascending = False   # newest-first by default
+        self._entries: list[dict] = [] # [{"path": str, "timestamp": datetime}]
+
+        self.setWindowTitle("Autosaves")
+        self.setMinimumSize(460, 340)
+        self.setModal(True)
+
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setSpacing(8)
+        root.setContentsMargins(12, 12, 12, 12)
+
+        # ── Header row: count label + sort toggle ─────────────────────────────
+        header_row = QHBoxLayout()
+
+        self._count_lbl = QLabel()
+        self._count_lbl.setProperty("class", "dim")
+        header_row.addWidget(self._count_lbl)
+
+        header_row.addStretch()
+
+        self._sort_btn = QPushButton("Date ▼")
+        self._sort_btn.setFixedWidth(72)
+        self._sort_btn.setFlat(True)
+        self._sort_btn.setStyleSheet("font-size: 11px; color: #9ca3af;")
+        self._sort_btn.clicked.connect(self._toggle_sort)
+        header_row.addWidget(self._sort_btn)
+
+        root.addLayout(header_row)
+
+        # ── List ──────────────────────────────────────────────────────────────
+        from PySide6.QtWidgets import QListWidget
+        self._list = QListWidget()
+        self._list.setAlternatingRowColors(True)
+        self._list.setSelectionMode(QListWidget.SingleSelection)
+        self._list.itemSelectionChanged.connect(self._on_selection_changed)
+        self._list.itemDoubleClicked.connect(self._on_load)
+        root.addWidget(self._list, stretch=1)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        root.addWidget(sep)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
+        self._load_btn = QPushButton("Load")
+        self._load_btn.setEnabled(False)
+        self._load_btn.setFixedWidth(80)
+        self._load_btn.clicked.connect(self._on_load)
+        btn_row.addWidget(self._load_btn)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedWidth(80)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        root.addLayout(btn_row)
+
+    def _refresh(self) -> None:
+        """Reload autosave list from disk and repopulate the widget."""
+        self._entries = list_autosaves()   # always returns newest-first
+        if self._sort_ascending:
+            self._entries = list(reversed(self._entries))
+        self._repopulate()
+
+    def _repopulate(self) -> None:
+        from PySide6.QtWidgets import QListWidgetItem
+        self._list.clear()
+
+        n = len(self._entries)
+        if n == 0:
+            self._count_lbl.setText("No autosaves yet")
+        else:
+            self._count_lbl.setText(f"{n} autosave{'s' if n != 1 else ''}")
+
+        for entry in self._entries:
+            ts = entry["timestamp"]
+            label = ts.strftime("%Y-%m-%d   %H:%M:%S")
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, entry["path"])
+            self._list.addItem(item)
+
+        self._load_btn.setEnabled(False)
+
+    def _toggle_sort(self) -> None:
+        self._sort_ascending = not self._sort_ascending
+        arrow = "▲" if self._sort_ascending else "▼"
+        self._sort_btn.setText(f"Date {arrow}")
+        self._entries = list(reversed(self._entries))
+        self._repopulate()
+
+    def _on_selection_changed(self) -> None:
+        self._load_btn.setEnabled(bool(self._list.selectedItems()))
+
+    def _on_load(self) -> None:
+        items = self._list.selectedItems()
+        if not items:
+            return
+
+        path = items[0].data(Qt.UserRole)
+        try:
+            chain = load_autosave(path)
+        except ValueError as e:
+            QMessageBox.warning(self, "Autosave Error", str(e))
+            return
+
+        self.accept()
+        self._main._load_autosave_chain(chain)

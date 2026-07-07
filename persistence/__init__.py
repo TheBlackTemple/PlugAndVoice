@@ -10,6 +10,9 @@ Public surface:
   list_presets(presets_dir) -> list[dict]
   delete_preset(path)
   build_chain_objects(chain_desc, on_missing, on_load_error, shutdown_flag) -> list
+  write_autosave(chain_desc, max_autosaves) -> str
+  list_autosaves() -> list[dict]
+  load_autosave(path) -> list[dict]
 """
 
 from .session import (
@@ -23,6 +26,12 @@ from .session import (
     build_chain_objects,
 )
 
+from .autosave import (
+    write_autosave,
+    list_autosaves,
+    load_autosave,
+)
+
 __all__ = [
     "capture_raw_state",
     "save_session",
@@ -32,4 +41,7 @@ __all__ = [
     "list_presets",
     "delete_preset",
     "build_chain_objects",
+    "write_autosave",
+    "list_autosaves",
+    "load_autosave",
 ]

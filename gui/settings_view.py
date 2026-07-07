@@ -25,7 +25,7 @@ from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QGroupBox, QLabel, QMessageBox,
-    QPushButton, QVBoxLayout, QHBoxLayout, QFrame,
+    QPushButton, QSpinBox, QVBoxLayout, QHBoxLayout, QFrame,
 )
 
 from settings import (
@@ -206,6 +206,23 @@ class SettingsView(QDialog):
         )
         root.addWidget(self._remember_check)
 
+        # ── Autosave cap ──────────────────────────────────────────────────────
+        autosave_row = QHBoxLayout()
+        autosave_lbl = QLabel("Max autosaves:")
+        autosave_lbl.setFixedWidth(110)
+        autosave_row.addWidget(autosave_lbl)
+
+        self._max_autosaves_spin = QSpinBox()
+        self._max_autosaves_spin.setRange(0, 999)
+        self._max_autosaves_spin.setFixedWidth(64)
+        self._max_autosaves_spin.setSpecialValueText("Unlimited")
+        self._max_autosaves_spin.setToolTip(
+            "Maximum number of autosaves to keep.\n0 = unlimited."
+        )
+        autosave_row.addWidget(self._max_autosaves_spin)
+        autosave_row.addStretch()
+        root.addLayout(autosave_row)
+
         # ── Buttons ───────────────────────────────────────────────────────────
         self._add_separator(root)
 
@@ -293,6 +310,11 @@ class SettingsView(QDialog):
 
         # Remember / autostart
         self._remember_check.setChecked(bool(self._current_settings.get("autostart", False)))
+
+        # Max autosaves
+        self._max_autosaves_spin.setValue(
+            int(self._current_settings.get("max_autosaves", 0))
+        )
 
         # Re-connect and run initial validation.
         self._connect_pair_signals()
@@ -573,6 +595,7 @@ class SettingsView(QDialog):
         new_settings["asio"]           = self._asio_check.isChecked()
         new_settings["exclusive_mode"] = self._exclusive_check.isChecked()
         new_settings["autostart"]      = autostart
+        new_settings["max_autosaves"]  = self._max_autosaves_spin.value()
 
         save_settings(new_settings)
         log.info(

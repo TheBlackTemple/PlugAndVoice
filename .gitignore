@@ -7,3 +7,4 @@ presets/*
 session.json
 session.json.bak
 .vscode
+autosaves/*
