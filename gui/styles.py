@@ -239,6 +239,30 @@ QStatusBar {{
 QMessageBox {{
     background: {C_BG_PANEL};
 }}
+
+/* ── List Widget ── */
+QListWidget, QListView {{
+    background-color: {C_BG_PANEL};
+    color: {C_TEXT};
+    border: 1px solid {C_BORDER};
+    border-radius: 4px;
+    alternate-background-color: {C_BG_RAISED};
+    outline: none;
+}}
+QListWidget::item, QListView::item {{
+    padding: 4px 8px;
+    border: none;
+}}
+QListWidget::item:alternate, QListView::item:alternate {{
+    background-color: {C_BG_RAISED};
+}}
+QListWidget::item:selected, QListView::item:selected {{
+    background-color: {C_SIGNAL_DIM};
+    color: #ffffff;
+}}
+QListWidget::item:hover, QListView::item:hover {{
+    background-color: {C_BG_DEEP};
+}}
 """
 
 

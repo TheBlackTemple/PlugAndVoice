@@ -214,7 +214,7 @@ class SettingsView(QDialog):
 
         self._max_autosaves_spin = QSpinBox()
         self._max_autosaves_spin.setRange(0, 999)
-        self._max_autosaves_spin.setFixedWidth(64)
+        self._max_autosaves_spin.setFixedWidth(82)
         self._max_autosaves_spin.setSpecialValueText("Unlimited")
         self._max_autosaves_spin.setToolTip(
             "Maximum number of autosaves to keep.\n0 = unlimited."
