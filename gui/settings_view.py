@@ -20,7 +20,7 @@ Signals:
 
 import logging
 
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
@@ -39,7 +39,7 @@ from settings import (
     SUPPORTED_SAMPLE_RATES, SUPPORTED_BLOCK_SIZES,
     VST3_DIR, PRESETS_DIR,
 )
-from .styles import C_TEXT_WARN, C_TEXT_ERR
+from .styles import C_TEXT_WARN, C_TEXT_ERR, GAUGE_THEMES, DEFAULT_GAUGE_THEME, DbGauge
 from .hotkeys_tab import HotkeysTab
 from persistence import list_presets 
 
@@ -141,6 +141,15 @@ class SettingsView(QDialog):
         self._hotkeys_tab = HotkeysTab(preset_names, parent=hotkeys_page)
         hotkeys_layout.addWidget(self._hotkeys_tab)
         self._tabs.addTab(hotkeys_page, "Hotkeys")
+
+        # ── Themes tab ────────────────────────────────────────────────────────
+        themes_page = QWidget()
+        themes_page.setObjectName("tabPage")
+        themes_layout = QVBoxLayout(themes_page)
+        themes_layout.setSpacing(12)
+        themes_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(themes_page, "Themes")
+        self._build_themes_tab(themes_layout)
 
         # ── Shared bottom: buttons ────────────────────────────────────────────
         self._add_separator(root)
@@ -296,6 +305,118 @@ class SettingsView(QDialog):
         root.addLayout(autosave_row)
 
         root.addStretch()
+
+    def _build_themes_tab(self, root: QVBoxLayout) -> None:
+        """
+        Themes tab — lets the user pick a dB gauge colour palette.
+
+        Layout:
+          [Gauge theme group]
+            Picker row:  label | QComboBox
+            Description: one-line hint for the selected theme
+          [Live preview]
+            Three DbGauge bars (input / chain / output) animated by a QTimer
+            so the user sees all three segment bands in motion.
+        """
+        import math
+
+        # ── Picker ────────────────────────────────────────────────────────────
+        picker_group = QGroupBox("GAUGE THEME")
+        picker_form = QFormLayout(picker_group)
+        picker_form.setLabelAlignment(Qt.AlignRight)
+        picker_form.setSpacing(8)
+
+        self._theme_combo = QComboBox()
+        for key, theme in GAUGE_THEMES.items():
+            self._theme_combo.addItem(theme.name, userData=key)
+        picker_form.addRow("Theme:", self._theme_combo)
+
+        self._theme_desc = QLabel()
+        self._theme_desc.setProperty("class", "hint")
+        self._theme_desc.setWordWrap(True)
+        picker_form.addRow("", self._theme_desc)
+
+        root.addWidget(picker_group)
+
+        # ── Live preview ──────────────────────────────────────────────────────
+        preview_group = QGroupBox("LIVE PREVIEW")
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setSpacing(8)
+
+        hint = QLabel("Gauges animate through the full dB range so you can see all segments.")
+        hint.setProperty("class", "hint")
+        hint.setWordWrap(True)
+        preview_layout.addWidget(hint)
+
+        # Three labelled gauge columns — mirrors the main window layout.
+        gauges_row = QHBoxLayout()
+        gauges_row.setSpacing(20)
+
+        self._preview_gauges: list[DbGauge] = []
+        for label_text in ("INPUT", "CHAIN", "OUTPUT"):
+            col = QVBoxLayout()
+            col.setAlignment(Qt.AlignHCenter)
+            col.setSpacing(4)
+
+            gauge = DbGauge(preview_group, width=14, height=100)
+            self._preview_gauges.append(gauge)
+
+            lbl = QLabel(label_text)
+            lbl.setProperty("class", "section")
+            lbl.setAlignment(Qt.AlignHCenter)
+
+            col.addWidget(gauge, alignment=Qt.AlignHCenter)
+            col.addWidget(lbl)
+            gauges_row.addLayout(col)
+
+        gauges_row.addStretch()
+        preview_layout.addLayout(gauges_row)
+        root.addWidget(preview_group)
+        root.addStretch()
+
+        # ── Animation timer ───────────────────────────────────────────────────
+        # Slow sine wave cycling from FLOOR_DB to +3 dBFS so all three colour
+        # bands are visited continuously.  Each gauge is offset in phase so
+        # they don't all move in lock-step (more realistic appearance).
+        self._preview_tick = 0
+
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(40)   # ~25 Hz is plenty for preview
+
+        def _animate():
+            t = self._preview_tick * 0.05   # radians / tick → ~0.8 rad/s
+            self._preview_tick += 1
+            phases = [0.0, 0.9, 1.8]        # ~120° apart
+            floor = DbGauge.FLOOR_DB
+            for gauge, phase in zip(self._preview_gauges, phases):
+                # Sine oscillates -1..+1; map to floor..+3 dBFS
+                level = floor + (3.0 - floor) * (0.5 + 0.5 * math.sin(t + phase))
+                gauge.update_level(level)
+
+        self._preview_timer.timeout.connect(_animate)
+        self._preview_timer.start()
+
+        # ── Wire combo → preview update ───────────────────────────────────────
+        def _on_theme_changed(idx: int) -> None:
+            key = self._theme_combo.itemData(idx)
+            theme = GAUGE_THEMES.get(key)
+            if theme:
+                self._theme_desc.setText(theme.description)
+                for g in self._preview_gauges:
+                    g.set_theme(key)
+
+        self._theme_combo.currentIndexChanged.connect(_on_theme_changed)
+
+        # Trigger once to initialise description + gauge colours.
+        self._theme_combo.currentIndexChanged.emit(self._theme_combo.currentIndex())
+
+    def _populate_themes(self) -> None:
+        """Select the saved theme in the combo (called from _populate)."""
+        saved = self._current_settings.get("gauge_theme", DEFAULT_GAUGE_THEME)
+        for i in range(self._theme_combo.count()):
+            if self._theme_combo.itemData(i) == saved:
+                self._theme_combo.setCurrentIndex(i)
+                break
 
     def _add_separator(self, layout: QVBoxLayout) -> None:
         line = QFrame()
@@ -475,6 +596,9 @@ class SettingsView(QDialog):
 
         # Hotkeys
         self._hotkeys_tab.read_settings(self._current_settings)
+
+        # Gauge theme
+        self._populate_themes()
 
     def _device_label(self, d: "DeviceEntry", top_idx: int | None) -> str:
         """
@@ -757,6 +881,11 @@ class SettingsView(QDialog):
         new_settings["presets_dir"]    = self._presets_edit.text().strip() or PRESETS_DIR
         self._hotkeys_tab.write_settings(new_settings)
 
+        # Gauge theme — persist selected key
+        new_settings["gauge_theme"] = (
+            self._theme_combo.currentData() or DEFAULT_GAUGE_THEME
+        )
+
         save_settings(new_settings)
         log.info(
             "Settings applied — in: %s | out: %s | rate: %s | block: %d",
@@ -765,6 +894,24 @@ class SettingsView(QDialog):
 
         self.settings_applied.emit(new_settings)
         self.accept()
+
+    # ── Dialog lifecycle ──────────────────────────────────────────────────────
+
+    def closeEvent(self, event) -> None:
+        """Stop the preview animation timer before the dialog is destroyed."""
+        if hasattr(self, "_preview_timer"):
+            self._preview_timer.stop()
+        super().closeEvent(event)
+
+    def reject(self) -> None:
+        if hasattr(self, "_preview_timer"):
+            self._preview_timer.stop()
+        super().reject()
+
+    def accept(self) -> None:
+        if hasattr(self, "_preview_timer"):
+            self._preview_timer.stop()
+        super().accept()
 
     # ── Public: refresh after device change (e.g. USB hotplug) ───────────────
 

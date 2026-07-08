@@ -47,7 +47,7 @@ from persistence import (
     build_chain_objects,
     write_autosave, list_autosaves, load_autosave,
 )
-from .styles import DbGauge, C_TEXT_WARN
+from .styles import DbGauge, C_TEXT_WARN, DEFAULT_GAUGE_THEME
 from .settings_view import SettingsView
 
 log = logging.getLogger(__name__)
@@ -411,6 +411,8 @@ class MainWindow(QMainWindow):
             log.info("Autostart enabled — starting engine.")
             self._start_engine()
 
+        self._apply_gauge_theme(self._settings)
+
     # ── Settings ──────────────────────────────────────────────────────────────
 
     def _open_settings(self, force: bool = False, device_lost: bool = False) -> None:
@@ -466,6 +468,7 @@ class MainWindow(QMainWindow):
             self._start_engine()
 
         self._install_hotkeys()
+        self._apply_gauge_theme(self._settings)
 
     # ── Global hotkeys (RegisterHotKey / WM_HOTKEY) ───────────────────────────
     #
@@ -748,6 +751,19 @@ class MainWindow(QMainWindow):
             self._out_device_lbl.setText(out_name)
             self._out_format_lbl.setText("stopped")
 
+    def _apply_gauge_theme(self, settings: dict) -> None:
+        """
+        Push the saved gauge theme to every DbGauge in the window.
+        Called on startup and whenever settings are applied.
+        """
+        key = settings.get("gauge_theme", DEFAULT_GAUGE_THEME)
+        # Top-level gauges
+        self._in_gauge.set_theme(key)
+        self._out_gauge.set_theme(key)
+        # Per-slot gauges
+        for slot in self._slot_widgets():
+            slot.gauge.set_theme(key)
+
     @Slot()
     def _on_start(self) -> None:
         self._start_engine()
@@ -846,6 +862,8 @@ class MainWindow(QMainWindow):
             slot.open_editor.connect(self._on_open_editor)
             # Insert before the add button (last item in layout)
             self._chain_layout.insertWidget(self._chain_layout.count() - 1, slot)
+
+        self._apply_gauge_theme(self._settings)
 
     def _slot_widgets(self) -> list:
         result = []

@@ -5,8 +5,21 @@ Aesthetic direction: rack hardware / signal chain. Dark gunmetal panels,
 amber VU needle colour for levels, red clip indicators, monospaced readouts.
 One signature element: the dB gauge uses a segmented bar that shifts colour
 at -18 dBFS (green → amber → red), mirroring real hardware VU segments.
+
+Theme system
+------------
+``GAUGE_THEMES`` is a registry of named ``GaugeTheme`` objects.  Each theme
+defines three segment colours (low / mid / high), a clip colour, and an unlit
+background.  ``DbGauge.set_theme()`` swaps the active theme at runtime with no
+restart required.
+
+Adding a new theme: append an entry to ``GAUGE_THEMES`` and it will appear
+automatically in the Themes tab of SettingsView.
+
+DEFAULT_GAUGE_THEME is the key used when no preference is saved.
 """
 
+from dataclasses import dataclass
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPainter, QLinearGradient
 from PySide6.QtWidgets import QWidget, QSizePolicy
@@ -46,6 +59,97 @@ C_BTN_MUTED  = "#e8a030"
 C_BTN_BYPASS = "#1a4a6e"
 C_BTN_BYPASSED = "#3b8fd4"
 C_ACCENT     = "#3b8fd4"
+
+
+# ── Gauge theme system ────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class GaugeTheme:
+    """
+    Immutable colour palette for a DbGauge instance.
+
+    Segment boundaries (-18 dBFS and -6 dBFS) are fixed by the hardware VU
+    convention baked into DbGauge.THRESHOLDS; only colours vary per theme.
+
+    Attributes
+    ----------
+    name        Human-readable label shown in the Themes tab.
+    description One-line hint shown below the theme picker.
+    low         Colour for -∞ … -18 dBFS.
+    mid         Colour for -18 … -6 dBFS.
+    high        Colour for -6 … 0 dBFS.
+    clip        Colour for the clip-latch indicator (≥ 0 dBFS).
+    bg          Unlit segment background.
+    """
+    name:        str
+    description: str
+    low:         str
+    mid:         str
+    high:        str
+    clip:        str
+    bg:          str
+
+
+# Registry — order determines display order in SettingsView.
+# Key = settings value stored in preferences.
+GAUGE_THEMES: dict[str, GaugeTheme] = {
+    "classic": GaugeTheme(
+        name="Classic VU",
+        description="Green → amber → red. The hardware VU standard.",
+        low=C_GAUGE_LOW,    # #2ecc71 green
+        mid=C_GAUGE_MID,    # #e8a030 amber
+        high=C_GAUGE_HIGH,  # #e05050 red
+        clip=C_GAUGE_CLIP,
+        bg=C_GAUGE_BG,
+    ),
+    "blue_ice": GaugeTheme(
+        name="Blue Ice",
+        description="Cool cyan-to-white signal path. Studio monitor aesthetic.",
+        low="#1a7fc4",
+        mid="#48b4e0",
+        high="#c8f0ff",
+        clip="#ffffff",
+        bg="#050c12",
+    ),
+    "phosphor": GaugeTheme(
+        name="Phosphor",
+        description="Vintage green phosphor CRT. Oscilloscope energy.",
+        low="#00a86b",
+        mid="#39ff88",
+        high="#b8ffdc",
+        clip="#eaffee",
+        bg="#020d06",
+    ),
+    "ember": GaugeTheme(
+        name="Ember",
+        description="Deep orange to white-hot. Thermal / infrared palette.",
+        low="#7a2000",
+        mid="#e84010",
+        high="#ffb040",
+        clip="#fff0b0",
+        bg="#0d0400",
+    ),
+    "violet": GaugeTheme(
+        name="Violet",
+        description="Purple to pink. Clean and modern.",
+        low="#5020a0",
+        mid="#9040e0",
+        high="#e060ff",
+        clip="#ffd0ff",
+        bg="#08020e",
+    ),
+    "monochrome": GaugeTheme(
+        name="Monochrome",
+        description="Single grey ramp. Minimal / low distraction.",
+        low="#3a3f47",
+        mid="#7a8290",
+        high="#c8cdd6",
+        clip="#ffffff",
+        bg="#0d0f11",
+    ),
+}
+
+DEFAULT_GAUGE_THEME = "classic"
 
 
 # ── Global stylesheet ─────────────────────────────────────────────────────────
@@ -334,33 +438,56 @@ QListWidget::item:hover, QListView::item:hover {{
 
 class DbGauge(QWidget):
     """
-    Vertical segmented dB bar.
+    Vertical segmented dB bar with swappable colour themes.
 
-    Segments shift colour at fixed thresholds:
-      -∞ … -18 dBFS  → green
-      -18 … -6 dBFS  → amber
-      -6 … 0 dBFS    → red
-      ≥ 0 dBFS       → clip latch (solid bright red, resets on click)
+    Segments shift colour at fixed thresholds (hardware VU convention):
+      -∞ … -18 dBFS  → theme.low
+      -18 … -6 dBFS  → theme.mid
+      -6 … 0 dBFS    → theme.high
+      ≥ 0 dBFS       → clip latch (theme.clip, resets on click)
 
-    update_level(db: float) — call from the GUI thread (QTimer poll).
+    Public API
+    ----------
+    update_level(db)  — call from the GUI thread (QTimer poll).
+    set_theme(key)    — swap palette by GAUGE_THEMES key; repaints immediately.
+    reset_clip()      — clear clip latch programmatically.
     """
 
     FLOOR_DB = -60.0
     CLIP_DB  = 0.0
 
-    THRESHOLDS = [  # (upper_db, colour)
-        (-18.0, C_GAUGE_LOW),
-        (-6.0,  C_GAUGE_MID),
-        (0.0,   C_GAUGE_HIGH),
-    ]
+    # Segment band boundaries (upper dB edge).  Colours are resolved from the
+    # active theme at paint time so set_theme() never needs to touch this list.
+    _BAND_UPPER_DB = [-18.0, -6.0, 0.0]
 
-    def __init__(self, parent=None, width=8, height=80):
+    def __init__(self, parent=None, width=8, height=80,
+                 theme_key: str = DEFAULT_GAUGE_THEME):
         super().__init__(parent)
         self._db = self.FLOOR_DB
         self._clipped = False
+        self._theme: GaugeTheme = GAUGE_THEMES.get(theme_key,
+                                    GAUGE_THEMES[DEFAULT_GAUGE_THEME])
         self.setFixedSize(width, height)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
+
+    # ── Theme control ─────────────────────────────────────────────────────────
+
+    def set_theme(self, key: str) -> None:
+        """Swap to a named theme from GAUGE_THEMES.  Unknown keys are ignored."""
+        if key in GAUGE_THEMES:
+            self._theme = GAUGE_THEMES[key]
+            self.update()
+
+    @property
+    def theme_key(self) -> str:
+        """Return the key of the currently active theme."""
+        for k, v in GAUGE_THEMES.items():
+            if v is self._theme:
+                return k
+        return DEFAULT_GAUGE_THEME
+
+    # ── Level control ─────────────────────────────────────────────────────────
 
     def update_level(self, db: float) -> None:
         self._db = max(db, self.FLOOR_DB)
@@ -377,15 +504,18 @@ class DbGauge(QWidget):
     def mousePressEvent(self, event):
         self.reset_clip()
 
+    # ── Paint ─────────────────────────────────────────────────────────────────
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
         w, h = self.width(), self.height()
+        theme = self._theme
 
-        p.fillRect(0, 0, w, h, QColor(C_GAUGE_BG))
+        p.fillRect(0, 0, w, h, QColor(theme.bg))
 
         # if self._clipped:
-        #     p.fillRect(0, 0, w, h, QColor(C_GAUGE_CLIP))
+        #     p.fillRect(0, 0, w, h, QColor(theme.clip))
         #     return
 
         db = self._db
@@ -396,11 +526,14 @@ class DbGauge(QWidget):
         if fill_px <= 0:
             return
 
+        # Band colours follow THRESHOLDS order: low, mid, high
+        band_colours = [theme.low, theme.mid, theme.high]
+
         bottom = h
         remaining = fill_px
         prev_lower_db = self.FLOOR_DB
 
-        for upper_db, colour in self.THRESHOLDS: 
+        for upper_db, colour in zip(self._BAND_UPPER_DB, band_colours):
             band_frac = (upper_db - prev_lower_db) / (self.CLIP_DB - self.FLOOR_DB)
             band_px = int(band_frac * h)
             draw_px = min(remaining, band_px)
