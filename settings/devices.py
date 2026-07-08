@@ -366,9 +366,8 @@ def validate_pair(
         return PairValidation(
             severity=PairSeverity.WARN,
             message=(
-                "Output is a real speaker or headphone — processed audio will play "
-                "out loud. Other apps won't receive the signal. "
-                "Install VB-Cable to route silently."
+                "Output is a real speaker or headphone — proceed with caution or "
+                "install and use VB-Cable to route silently."
             ),
         )
 

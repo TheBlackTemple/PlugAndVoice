@@ -154,7 +154,9 @@ class SettingsView(QDialog):
         in_col.setSpacing(2)
         in_col.addWidget(self._in_combo)
         in_col.addWidget(self._in_warning)
-        dev_form.addRow("Input:", in_col)
+        input_label = QLabel("Input:")
+        input_label.setFixedWidth(45)
+        dev_form.addRow(input_label, in_col)
 
         # Output row
         self._out_combo = QComboBox()
@@ -165,7 +167,9 @@ class SettingsView(QDialog):
         out_col.setSpacing(2)
         out_col.addWidget(self._out_combo)
         out_col.addWidget(self._out_warning)
-        dev_form.addRow("Output:", out_col)
+        output_label = QLabel("Output:")
+        output_label.setFixedWidth(45)
+        dev_form.addRow(output_label, out_col)
 
         # Pair status line — sits between the two combos visually via the form,
         # but logically belongs to both.  Word-wrap + max width prevent overflow.
@@ -173,6 +177,9 @@ class SettingsView(QDialog):
         self._pair_status.setVisible(False)
         self._pair_status.setWordWrap(True)
         self._pair_status.setMaximumWidth(360)
+        self._pair_status.setFixedHeight(45)
+        self._pair_status.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        
         dev_form.addRow("", self._pair_status)
 
         # Power toggle — right-aligned, small, unobtrusive.
