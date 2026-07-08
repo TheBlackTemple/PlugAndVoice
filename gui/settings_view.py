@@ -111,6 +111,7 @@ class SettingsView(QDialog):
         root.addWidget(self._tabs)
 
         audio_page = QWidget()
+        audio_page.setObjectName("tabPage")
         audio_layout = QVBoxLayout(audio_page)
         audio_layout.setSpacing(10)
         audio_layout.setContentsMargins(0, 8, 0, 0)
@@ -118,6 +119,7 @@ class SettingsView(QDialog):
         self._build_audio_tab(audio_layout)
 
         folders_page = QWidget()
+        folders_page.setObjectName("tabPage")
         folders_layout = QVBoxLayout(folders_page)
         folders_layout.setSpacing(10)
         folders_layout.setContentsMargins(0, 8, 0, 0)

@@ -186,14 +186,11 @@ QGroupBox::title {{
     letter-spacing: 1px;
 }}
 
-QVBoxLayout QWidget {{
-    background: {C_BG_PANEL};
-}}
-
 /* ── CheckBox ── */
 QCheckBox {{
     color: {C_TEXT};
     spacing: 6px;
+    background-color: {C_BG_PANEL};
 }}
 QCheckBox::indicator {{
     width: 14px;
@@ -261,6 +258,10 @@ QFrame[frameShape="5"] {{
 }}
 
 /* ── Tabs ── */
+QWidget#tabPage {{ 
+    background-color: {C_BG_PANEL}; 
+}}
+
 QTabWidget::pane {{
     background-color: {C_BG_PANEL};
     border: 1px solid {C_BORDER};
