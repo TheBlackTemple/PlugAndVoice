@@ -40,6 +40,8 @@ from settings import (
     VST3_DIR, PRESETS_DIR,
 )
 from .styles import C_TEXT_WARN, C_TEXT_ERR
+from .hotkeys_tab import HotkeysTab
+from persistence import list_presets 
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +127,20 @@ class SettingsView(QDialog):
         folders_layout.setContentsMargins(0, 8, 0, 0)
         self._tabs.addTab(folders_page, "Folders")
         self._build_folders_tab(folders_layout)
+
+        # ── Hotkeys tab ───────────────────────────────────────────────────────
+        hotkeys_page = QWidget()
+        hotkeys_page.setObjectName("tabPage")
+        hotkeys_layout = QVBoxLayout(hotkeys_page)
+        hotkeys_layout.setContentsMargins(0, 0, 0, 0)
+
+        preset_names = [p.get("name", "") for p in list_presets(
+            self._current_settings.get("presets_dir", PRESETS_DIR)
+        ) if p.get("name")]
+
+        self._hotkeys_tab = HotkeysTab(preset_names, parent=hotkeys_page)
+        hotkeys_layout.addWidget(self._hotkeys_tab)
+        self._tabs.addTab(hotkeys_page, "Hotkeys")
 
         # ── Shared bottom: buttons ────────────────────────────────────────────
         self._add_separator(root)
@@ -457,6 +473,9 @@ class SettingsView(QDialog):
         self._connect_pair_signals()
         self._on_pair_changed()
 
+        # Hotkeys
+        self._hotkeys_tab.read_settings(self._current_settings)
+
     def _device_label(self, d: "DeviceEntry", top_idx: int | None) -> str:
         """
         Build the display label for a combo item.
@@ -736,6 +755,7 @@ class SettingsView(QDialog):
         new_settings["vst3_dir"]       = self._vst3_edit.text().strip() or VST3_DIR
         new_settings["userdata_dir"]   = self._userdata_edit.text().strip() or "./user_data"
         new_settings["presets_dir"]    = self._presets_edit.text().strip() or PRESETS_DIR
+        self._hotkeys_tab.write_settings(new_settings)
 
         save_settings(new_settings)
         log.info(

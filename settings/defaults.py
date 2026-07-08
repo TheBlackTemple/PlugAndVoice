@@ -33,6 +33,7 @@ DEFAULTS: dict = {
     "vst3_dir":     VST3_DIR,
     "userdata_dir": "./user_data",
     "presets_dir":  PRESETS_DIR,
+    "hotkeys": {"mute": "", "start": "", "stop": "", "presets": {}},
 }
 
 # Sample rates shown in the settings UI as override options

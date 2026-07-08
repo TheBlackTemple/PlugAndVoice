@@ -61,6 +61,13 @@ _CALLBACK_STALL_TIMEOUT = 0.5
 # Prevents an infinite restart loop when the device is persistently unavailable.
 _MAX_RESTART_ATTEMPTS = 3
 
+# Hotkey IDs: unique integers passed to RegisterHotKey / WM_HOTKEY wParam.
+# Preset bindings use IDs starting at _HK_PRESET_BASE.
+_HK_ID_MUTE         = 1
+_HK_ID_START        = 2
+_HK_ID_STOP         = 3
+_HK_PRESET_BASE     = 100   # preset IDs: 100, 101, 102, …
+
 # Optional: pywin32 for editor window management
 try:
     import win32gui
@@ -183,6 +190,9 @@ class MainWindow(QMainWindow):
         self._setup_meter_timer()
         self._load_presets()
         self._refresh_device_labels()
+        
+        self._hotkey_id_map: dict[int, str] = {}   # hk_id → action tag
+        self._install_hotkeys()
 
         # Startup: validate devices, optionally autostart
         self._on_startup()
@@ -423,7 +433,7 @@ class MainWindow(QMainWindow):
         if self._engine.running:
             resp = QMessageBox.question(
                 self, "Load Autosave",
-                "Load this autosave? This will briefly stop the engine.",
+                "Load this autosave? This will overwrite your current loadout.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if resp != QMessageBox.Yes:
@@ -455,6 +465,124 @@ class MainWindow(QMainWindow):
             self._trigger_restart(mutate=mutate)
         elif not self._engine.running and self._settings.get("autostart"):
             self._start_engine()
+
+        self._install_hotkeys()
+
+    # ── Global hotkeys (RegisterHotKey / WM_HOTKEY) ───────────────────────────
+    #
+    # RegisterHotKey requires a Win32 HWND to receive WM_HOTKEY messages.
+    # We use the main window's native handle (self.winId()), which is always
+    # valid while the window exists — even when hidden to tray.
+    #
+    # WM_HOTKEY is NOT delivered via Qt's event system; it arrives through
+    # the Win32 message pump. We intercept it by overriding nativeEvent().
+    #
+    # NOTE (bundle): no special PyInstaller flags needed — RegisterHotKey is
+    # a standard win32api call, no extra DLLs involved.
+
+    def _install_hotkeys(self) -> None:
+        """
+        Unregister all current hotkeys, then re-register from settings.
+        Safe to call multiple times (settings applied, startup).
+        No-ops gracefully when pywin32 is unavailable.
+        """
+        if not _WIN32_AVAILABLE:
+            return
+
+        self._unregister_all_hotkeys()
+
+        hk     = self._settings.get("hotkeys") or {}
+        hwnd   = int(self.winId())
+
+        def _register(hk_id: int, key_string: str, action_tag: str) -> None:
+            if not key_string:
+                return
+            mods, vk = _parse_key_string(key_string)
+            if vk is None:
+                log.warning("Hotkey: could not parse key string %r — skipped.", key_string)
+                return
+            try:
+                win32gui.RegisterHotKey(hwnd, hk_id, mods, vk)  
+                self._hotkey_id_map[hk_id] = action_tag
+                log.debug("Registered hotkey id=%d %r → %r", hk_id, key_string, action_tag)
+            except Exception as e:
+                log.warning(
+                    "Could not register hotkey %r (id=%d): %s — "
+                    "another app may own this combo.",
+                    key_string, hk_id, e,
+                )
+
+        _register(_HK_ID_MUTE,  hk.get("mute",  ""), "mute")
+        _register(_HK_ID_START, hk.get("start", ""), "start")
+        _register(_HK_ID_STOP,  hk.get("stop",  ""), "stop")
+
+        known_presets = set(self._presets.keys())
+        for offset, (key_string, preset_name) in enumerate(
+            (hk.get("presets") or {}).items()
+        ):
+            if preset_name not in known_presets:
+                log.warning(
+                    "Hotkey: preset %r not found — binding %r skipped.",
+                    preset_name, key_string,
+                )
+                continue
+            hk_id = _HK_PRESET_BASE + offset
+            _register(hk_id, key_string, f"preset:{preset_name}")
+
+    def _unregister_all_hotkeys(self) -> None:
+        if not _WIN32_AVAILABLE:
+            return
+        hwnd = int(self.winId())
+        for hk_id in list(self._hotkey_id_map):
+            try:
+                win32gui.UnregisterHotKey(hwnd, hk_id)
+            except Exception:
+                pass
+        self._hotkey_id_map.clear()
+
+    def nativeEvent(self, event_type: bytes, message) -> tuple[bool, int]:
+        """
+        Intercept WM_HOTKEY messages from the Win32 message pump.
+        Qt does not translate these into key events, so we handle them here.
+        """
+        WM_HOTKEY = 0x0312
+        if _WIN32_AVAILABLE and event_type == b"windows_generic_MSG":
+            # message is a sip.voidptr; cast to access wParam (hotkey id).
+            import ctypes
+            msg = ctypes.wintypes.MSG.from_address(int(message))
+            if msg.message == WM_HOTKEY:
+                hk_id = msg.wParam
+                self._on_hotkey_fired(hk_id)
+                return True, 0
+        return super().nativeEvent(event_type, message)
+
+    def _on_hotkey_fired(self, hk_id: int) -> None:
+        action = self._hotkey_id_map.get(hk_id)
+        if action is None:
+            return
+
+        if action == "mute":
+            self._on_mute_toggle()
+
+        elif action == "start":
+            if not self._engine.running:
+                self._start_engine()
+
+        elif action == "stop":
+            if self._engine.running:
+                self._stop_engine()
+
+        elif action.startswith("preset:"):
+            preset_name = action[len("preset:"):]
+            # Check existence against live preset dict — not the settings snapshot.
+            if preset_name not in self._presets:
+                log.warning(
+                    "Hotkey: preset %r no longer exists — ignoring.", preset_name
+                )
+                return
+            # Hotkeys are intentional — apply without confirmation dialog.
+            self._apply_preset_by_name(preset_name)
+
 
     # ── Engine start / stop ───────────────────────────────────────────────────
 
@@ -993,7 +1121,7 @@ class MainWindow(QMainWindow):
         if self._engine.running:
             resp = QMessageBox.question(
                 self, "Load Preset",
-                f"Load preset '{name}'? This will briefly stop the engine.",
+                f"Load preset '{name}'? This will overwrite your current loadout.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if resp != QMessageBox.Yes:
@@ -1174,6 +1302,8 @@ class MainWindow(QMainWindow):
         save_session(self._chain_desc, SESSION_PATH)
         save_settings(self._settings)
 
+        self._unregister_all_hotkeys()
+
         log.info("Shutdown complete.")
         event.accept()
 
@@ -1304,3 +1434,86 @@ class AutosaveDialog(QDialog):
 
         self.accept()
         self._main._load_autosave_chain(chain)
+
+
+# ── Module-level helper for keybinds ──────────────────────────────────
+
+_QT_MOD_MAP = {
+    "ctrl":  win32con.MOD_CONTROL if _WIN32_AVAILABLE else 0,
+    "shift": win32con.MOD_SHIFT   if _WIN32_AVAILABLE else 0,
+    "alt":   win32con.MOD_ALT     if _WIN32_AVAILABLE else 0,
+    "meta":  win32con.MOD_WIN     if _WIN32_AVAILABLE else 0,
+}
+
+# fmt: off
+_VK_MAP: dict[str, int] = {
+    # Function keys
+    "f1":  0x70, "f2":  0x71, "f3":  0x72,  "f4":  0x73,
+    "f5":  0x74, "f6":  0x75, "f7":  0x76,  "f8":  0x77,
+    "f9":  0x78, "f10": 0x79, "f11": 0x7A,  "f12": 0x7B,
+    # Alphabet
+    **{chr(c): ord(chr(c).upper()) for c in range(ord("a"), ord("z") + 1)},
+    # Digits (main row)
+    **{str(d): ord(str(d)) for d in range(10)},
+    # Numpad digits
+    "num+0": 0x60, "num+1": 0x61, "num+2": 0x62, "num+3": 0x63,
+    "num+4": 0x64, "num+5": 0x65, "num+6": 0x66, "num+7": 0x67,
+    "num+8": 0x68, "num+9": 0x69,
+    # Numpad operators — Qt emits these as "Num+*", "Num++", etc.
+    "num+*": 0x6A, "num++": 0x6B, "num+-": 0x6D,
+    "num+.": 0x6E, "num+/": 0x6F,
+    # Navigation / misc
+    "home":   0x24, "end":    0x23, "pgup":  0x21, "pgdown": 0x22,
+    "ins":    0x2D, "space":  0x20,
+    "left":   0x25, "up":     0x26, "right": 0x27, "down":   0x28,
+    # Punctuation — US layout
+    ";":  0xBA, "=":  0xBB, ",":  0xBC, "-":  0xBD,
+    ".":  0xBE, "/":  0xBF, "`":  0xC0, "[":  0xDB,
+    "\\": 0xDC, "|":  0xDC,             # | is Shift+\ — same VK
+    "]":  0xDD, "'":  0xDE,
+    # Main keyboard operators (when used without Num+ prefix)
+    "*":  0x6A, "+":  0x6B,
+}
+# fmt: on
+
+def _parse_key_string(key_string: str) -> tuple[int, int | None]:
+    """
+    Parse a Qt PortableText key string into (win32_modifiers, vk_code).
+    Returns (0, None) if the key part cannot be resolved.
+
+    Handles the Num+X family specially: Qt emits numpad keys as e.g. "Num+*"
+    or "Ctrl+Num+5". Splitting naively on "+" would destroy those tokens, so
+    we reassemble any "Num" + following token before doing modifier extraction.
+
+    Examples:
+      "Ctrl+M"      → (MOD_CONTROL, 0x4D)
+      "F5"          → (0, 0x74)
+      "Shift+F9"    → (MOD_SHIFT, 0x78)
+      "Ctrl+Alt+X"  → (MOD_CONTROL | MOD_ALT, 0x58)
+      "Num+*"       → (0, 0x6A)
+      "Ctrl+Num+5"  → (MOD_CONTROL, 0x65)
+    """
+    # Reassemble Num+X tokens before splitting on modifiers.
+    # "Ctrl+Num+5" → split gives ["Ctrl", "Num", "5"]; we want ["Ctrl", "Num+5"].
+    raw_parts = key_string.split("+")
+    parts: list[str] = []
+    i = 0
+    while i < len(raw_parts):
+        if raw_parts[i].lower() == "num" and i + 1 < len(raw_parts):
+            parts.append(f"Num+{raw_parts[i + 1]}")
+            i += 2
+        else:
+            parts.append(raw_parts[i])
+            i += 1
+
+    mods = 0
+    key  = ""
+    for part in parts:
+        lower = part.lower()
+        if lower in _QT_MOD_MAP:
+            mods |= _QT_MOD_MAP[lower]
+        else:
+            key = lower  # last non-modifier token is the key
+
+    vk = _VK_MAP.get(key)
+    return mods, vk
