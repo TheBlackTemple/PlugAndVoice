@@ -394,7 +394,6 @@ class MainWindow(QMainWindow):
             self._open_settings(force=True)
             return
         
-        # TODO: REFACTOR INTO PRESET MANAGEMENT
         # Restore last session as active chain.
         # Session overrides the first preset on startup — it is "what was open last."
         session_chain = load_session(SESSION_PATH)
@@ -1297,7 +1296,6 @@ class MainWindow(QMainWindow):
         self._shutdown_event.set()
         self._stop_engine()
 
-        # TODO: refactor?
         # Save session + settings to disk
         save_session(self._chain_desc, SESSION_PATH)
         save_settings(self._settings)
