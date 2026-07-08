@@ -370,7 +370,7 @@ class MainWindow(QMainWindow):
 
         self._mute_btn = QPushButton("Mute")
         self._mute_btn.setProperty("class", "mute")
-        self._mute_btn.setFixedWidth(60)
+        self._mute_btn.setFixedWidth(75)
         self._mute_btn.clicked.connect(self._on_mute_toggle)
         layout.addWidget(self._mute_btn)
 
