@@ -30,6 +30,9 @@ DEFAULTS: dict = {
     "last_preset": "",       # Name of last active preset; restored on startup.
     "max_autosaves": 0,      # Per-preset autosave cap; 0 = unlimited.
     "exclusive_mode": False, # WASAPI exclusive mode (Private Mode); False = shared.
+    "vst3_dir":     VST3_DIR,
+    "userdata_dir": "./user_data",
+    "presets_dir":  PRESETS_DIR,
 }
 
 # Sample rates shown in the settings UI as override options

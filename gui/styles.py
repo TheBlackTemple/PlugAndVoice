@@ -71,6 +71,11 @@ QLabel[class="dim"] {{
     color: {C_TEXT_DIM};
     font-size: 10px;
 }}
+QLabel[class="hint"] {{
+    color: {C_TEXT_DIM};
+    font-size: 10px;
+    font-style: italic;
+}}
 QLabel[class="warn"] {{
     color: {C_TEXT_WARN};
 }}
@@ -181,6 +186,10 @@ QGroupBox::title {{
     letter-spacing: 1px;
 }}
 
+QVBoxLayout QWidget {{
+    background: {C_BG_PANEL};
+}}
+
 /* ── CheckBox ── */
 QCheckBox {{
     color: {C_TEXT};
@@ -213,6 +222,29 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
 }}
 
+/* ── Text inputs ── */
+QLineEdit {{
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT};
+    border: 1px solid {C_BORDER};
+    border-radius: 3px;
+    padding: 3px 6px;
+    min-height: 22px;
+}}
+QLineEdit:hover {{
+    border-color: {C_ACCENT};
+}}
+QLineEdit:focus {{
+    border-color: {C_ACCENT};
+}}
+QLineEdit:disabled {{
+    color: {C_TEXT_DIM};
+    border-color: {C_BORDER_LO};
+}}
+QLineEdit[class="hint"] {{
+    color: {C_TEXT_DIM};
+}}
+
 /* ── Spin box ── */
 QSpinBox {{
     background-color: {C_BG_RAISED};
@@ -226,6 +258,37 @@ QSpinBox {{
 QFrame[frameShape="4"],
 QFrame[frameShape="5"] {{
     color: {C_BORDER};
+}}
+
+/* ── Tabs ── */
+QTabWidget::pane {{
+    background-color: {C_BG_PANEL};
+    border: 1px solid {C_BORDER};
+    border-radius: 4px;
+    padding: 10px;
+}}
+QTabWidget::tab-bar {{
+    alignment: left;
+}}
+QTabBar::tab {{
+    background-color: {C_BG_RAISED};
+    color: {C_TEXT_DIM};
+    border: 1px solid {C_BORDER};
+    border-bottom: none;
+    border-radius: 3px 3px 0 0;
+    padding: 5px 14px;
+    margin-right: 2px;
+    font-size: 11px;
+}}
+QTabBar::tab:selected {{
+    background-color: {C_BG_PANEL};
+    color: {C_TEXT};
+    border-bottom: 1px solid {C_BG_PANEL};
+}}
+QTabBar::tab:hover:!selected {{
+    color: {C_TEXT};
+    border-color: {C_ACCENT};
+    border-bottom: none;
 }}
 
 /* ── Status / info bar ── */

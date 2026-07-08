@@ -24,8 +24,9 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QFormLayout, QGroupBox, QLabel, QMessageBox,
-    QPushButton, QSpinBox, QVBoxLayout, QHBoxLayout, QFrame,
+    QFileDialog, QFormLayout, QGroupBox, QLabel, QLineEdit, QMessageBox,
+    QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QHBoxLayout, QFrame,
+    QWidget,
 )
 
 from settings import (
@@ -36,6 +37,7 @@ from settings import (
     vbcable_present, asio_available,
     PairSeverity,
     SUPPORTED_SAMPLE_RATES, SUPPORTED_BLOCK_SIZES,
+    VST3_DIR, PRESETS_DIR,
 )
 from .styles import C_TEXT_WARN, C_TEXT_ERR
 
@@ -51,6 +53,17 @@ _STAR            = "★ "  # prepended to top-ranked combo item label
 _C_OK   = "#4caf50"
 _C_WARN = C_TEXT_WARN   # from styles module — keep consistent
 _C_ERR  = C_TEXT_ERR
+
+# Hint shown when the VST3 folder contains no plugins.
+_VST3_HINT = (
+    "No VST3 plugins found in the selected folder.\n\n"
+    "Plugins are usually installed to one of these locations:\n"
+    "  • C:\\Program Files\\Common Files\\VST3\n"
+    "  • C:\\Program Files\\VST3\n"
+    "  • C:\\Users\\<you>\\AppData\\Local\\Programs\\Common\\VST3\n\n"
+    "Open settings and point the folder above to whichever location your plugins use, "
+    "then restart MicHost."
+)
 
 
 class SettingsView(QDialog):
@@ -84,7 +97,7 @@ class SettingsView(QDialog):
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 16)
 
-        # ── Device lost banner ────────────────────────────────────────────────
+        # ── Device lost banner (above tabs — always visible) ──────────────────
         if self._device_lost:
             lost_label = QLabel("⚠  A device became unavailable while streaming. "
                                 "Re-select devices and apply to restart.")
@@ -92,6 +105,37 @@ class SettingsView(QDialog):
             lost_label.setWordWrap(True)
             root.addWidget(lost_label)
             self._add_separator(root)
+
+        # ── Tab container ─────────────────────────────────────────────────────
+        self._tabs = QTabWidget()
+        root.addWidget(self._tabs)
+
+        audio_page = QWidget()
+        audio_layout = QVBoxLayout(audio_page)
+        audio_layout.setSpacing(10)
+        audio_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(audio_page, "Audio")
+        self._build_audio_tab(audio_layout)
+
+        folders_page = QWidget()
+        folders_layout = QVBoxLayout(folders_page)
+        folders_layout.setSpacing(10)
+        folders_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(folders_page, "Folders")
+        self._build_folders_tab(folders_layout)
+
+        # ── Shared bottom: buttons ────────────────────────────────────────────
+        self._add_separator(root)
+
+        btns = QDialogButtonBox()
+        self._apply_btn = btns.addButton("Apply", QDialogButtonBox.AcceptRole)
+        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
+        btns.accepted.connect(self._on_apply)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+    def _build_audio_tab(self, root: QVBoxLayout) -> None:
+        """Builds the contents of the Audio tab (formerly the whole dialog)."""
 
         # ── Audio devices ─────────────────────────────────────────────────────
         dev_group = QGroupBox("AUDIO DEVICES")
@@ -122,9 +166,11 @@ class SettingsView(QDialog):
         dev_form.addRow("Output:", out_col)
 
         # Pair status line — sits between the two combos visually via the form,
-        # but logically belongs to both.  Single line; colour carries severity.
+        # but logically belongs to both.  Word-wrap + max width prevent overflow.
         self._pair_status = QLabel()
         self._pair_status.setVisible(False)
+        self._pair_status.setWordWrap(True)
+        self._pair_status.setMaximumWidth(360)
         dev_form.addRow("", self._pair_status)
 
         # Power toggle — right-aligned, small, unobtrusive.
@@ -200,10 +246,8 @@ class SettingsView(QDialog):
 
         root.addWidget(fmt_group)
 
-        # ── Remember / autostart ──────────────────────────────────────────────
-        self._remember_check = QCheckBox(
-            "Remember settings and autostart engine on next launch"
-        )
+        # ── Autostart engine ──────────────────────────────────────────────────
+        self._remember_check = QCheckBox("Autostart engine on next launch")
         root.addWidget(self._remember_check)
 
         # ── Autosave cap ──────────────────────────────────────────────────────
@@ -220,23 +264,96 @@ class SettingsView(QDialog):
             "Maximum number of autosaves to keep.\n0 = unlimited."
         )
         autosave_row.addWidget(self._max_autosaves_spin)
+        autosave_hint = QLabel("(0 = unlimited)")
+        autosave_hint.setProperty("class", "hint")
+        autosave_row.addWidget(autosave_hint)
         autosave_row.addStretch()
         root.addLayout(autosave_row)
 
-        # ── Buttons ───────────────────────────────────────────────────────────
-        self._add_separator(root)
-
-        btns = QDialogButtonBox()
-        self._apply_btn = btns.addButton("Apply", QDialogButtonBox.AcceptRole)
-        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
-        btns.accepted.connect(self._on_apply)
-        btns.rejected.connect(self.reject)
-        root.addWidget(btns)
+        root.addStretch()
 
     def _add_separator(self, layout: QVBoxLayout) -> None:
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         layout.addWidget(line)
+
+    def _build_folders_tab(self, root: QVBoxLayout) -> None:
+        """Builds the Folders tab: path pickers for VST3, user data, and presets."""
+
+        folder_group = QGroupBox("PLUGIN FOLDERS")
+        folder_form = QFormLayout(folder_group)
+        folder_form.setLabelAlignment(Qt.AlignRight)
+        folder_form.setSpacing(8)
+
+        # VST3 folder
+        self._vst3_edit, vst3_row = self._make_path_row()
+        folder_form.addRow("VST3 folder:", vst3_row)
+
+        # No-plugins warning — hidden until _check_vst3_folder() fires.
+        self._vst3_hint_label = QLabel(_VST3_HINT)
+        self._vst3_hint_label.setProperty("class", "warn")
+        self._vst3_hint_label.setWordWrap(True)
+        self._vst3_hint_label.setVisible(False)
+        folder_form.addRow("", self._vst3_hint_label)
+
+        # User data folder
+        self._userdata_edit, userdata_row = self._make_path_row()
+        folder_form.addRow("User data:", userdata_row)
+
+        # Presets / autosaves folder
+        self._presets_edit, presets_row = self._make_path_row()
+        folder_form.addRow("Presets / autosaves:", presets_row)
+
+        root.addWidget(folder_group)
+
+        note = QLabel(
+            "Folder changes take effect after restarting MicHost. "
+            "Relative paths are resolved from the application directory."
+        )
+        note.setProperty("class", "hint")
+        note.setWordWrap(True)
+        root.addWidget(note)
+
+        root.addStretch()
+
+        # Wire browse buttons
+        self._vst3_edit.textChanged.connect(self._check_vst3_folder)
+
+    def _make_path_row(self) -> tuple[QLineEdit, QHBoxLayout]:
+        """Return (QLineEdit, QHBoxLayout) for a folder path row with Browse button."""
+        edit = QLineEdit()
+        edit.setPlaceholderText("Click Browse or type a path…")
+        browse_btn = QPushButton("Browse…")
+        browse_btn.setFixedWidth(80)
+        browse_btn.clicked.connect(lambda: self._browse_folder(edit))
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        row.addWidget(edit)
+        row.addWidget(browse_btn)
+        return edit, row
+
+    def _browse_folder(self, target_edit: QLineEdit) -> None:
+        """Open a folder picker and write the result into target_edit."""
+        start = target_edit.text().strip() or "."
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Folder", start,
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks,
+        )
+        if path:
+            target_edit.setText(path)
+
+    def _check_vst3_folder(self, path: str) -> None:
+        """Show the no-plugins hint if the selected VST3 folder has no .vst3 entries."""
+        import os
+        folder = path.strip()
+        if not folder or not os.path.isdir(folder):
+            self._vst3_hint_label.setVisible(False)
+            return
+        has_plugins = any(
+            entry.name.endswith(".vst3")
+            for entry in os.scandir(folder)
+        )
+        self._vst3_hint_label.setVisible(not has_plugins)
 
     # ── Populate dropdowns from live enumeration ──────────────────────────────
 
@@ -314,6 +431,17 @@ class SettingsView(QDialog):
         # Max autosaves
         self._max_autosaves_spin.setValue(
             int(self._current_settings.get("max_autosaves", 0))
+        )
+
+        # Folder paths
+        self._vst3_edit.setText(
+            self._current_settings.get("vst3_dir", VST3_DIR)
+        )
+        self._userdata_edit.setText(
+            self._current_settings.get("userdata_dir", "./user_data")
+        )
+        self._presets_edit.setText(
+            self._current_settings.get("presets_dir", PRESETS_DIR)
         )
 
         # Re-connect and run initial validation.
@@ -596,6 +724,9 @@ class SettingsView(QDialog):
         new_settings["exclusive_mode"] = self._exclusive_check.isChecked()
         new_settings["autostart"]      = autostart
         new_settings["max_autosaves"]  = self._max_autosaves_spin.value()
+        new_settings["vst3_dir"]       = self._vst3_edit.text().strip() or VST3_DIR
+        new_settings["userdata_dir"]   = self._userdata_edit.text().strip() or "./user_data"
+        new_settings["presets_dir"]    = self._presets_edit.text().strip() or PRESETS_DIR
 
         save_settings(new_settings)
         log.info(
