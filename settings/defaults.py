@@ -5,7 +5,7 @@ The settings file is human-readable JSON, generated on first launch
 if missing. Deleting it is safe — it regenerates with these defaults.
 """
 
-SETTINGS_VERSION = 3
+SETTINGS_VERSION = 4
 
 # Paths (relative to working directory)
 SETTINGS_PATH = "./user_data/host_settings.json"
@@ -34,6 +34,7 @@ DEFAULTS: dict = {
     "userdata_dir": "./user_data",
     "presets_dir":  PRESETS_DIR,
     "hotkeys": {"mute": "", "start": "", "stop": "", "presets": {}},
+    "gauge_theme": "classic",
 }
 
 # Sample rates shown in the settings UI as override options
