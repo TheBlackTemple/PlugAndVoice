@@ -1191,6 +1191,16 @@ class MainWindow(QMainWindow):
         if not ok or not name.strip():
             return
         name = name.strip()
+
+        if name in self._presets:
+            resp = QMessageBox.question(
+                self, "Overwrite Preset",
+                f"A preset named '{name}' already exists. Overwrite it?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+
         data = {"version": 1, "name": name, "chain": list(self._chain_desc)}
         self._presets[name] = data
         if self._preset_combo.findText(name) < 0:
