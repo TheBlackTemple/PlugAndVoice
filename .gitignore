@@ -17,6 +17,9 @@ session.json
 session.json.bak
 autosaves/*
 user_data/
+!vst/.gitkeep
+!user_data/.gitkeep
+!autosaves/.gitkeep
 
 # PyInstaller
 dist/
