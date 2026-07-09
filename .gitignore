@@ -1,10 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+
+# App
 host_settings.json
 host_settings.json.bak
 host.log
-*.pyc
 *.vst3
 presets/*
 session.json
 session.json.bak
-.vscode
 autosaves/*
+user_data/
+
+# PyInstaller
+dist/
+build/
+*.spec.bak
+
+# Generics
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode
