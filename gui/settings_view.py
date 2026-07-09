@@ -251,7 +251,7 @@ class SettingsView(QDialog):
         fmt_form.addRow("Buffer size:", self._block_combo)
 
         # ASIO toggle
-        self._asio_check = QCheckBox("Use ASIO (requires ASIO-enabled PortAudio)")
+        self._asio_check = QCheckBox("Use ASIO (experimental - requires ASIO-enabled PortAudio)")
         asio_ok = asio_available()
         self._asio_check.setEnabled(asio_ok)
         if not asio_ok:
