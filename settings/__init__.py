@@ -1,5 +1,5 @@
 """
-settings — settings persistence, device logic, and logging setup for MicHost.
+settings — settings persistence, device logic, and logging setup for PlugAndVoice.
 
 Public surface:
 

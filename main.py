@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-main.py — MicHost application entry point.
+main.py — PlugAndVoice application entry point.
 
 Usage:
     python main.py              # launch the GUI
@@ -33,5 +33,5 @@ except ImportError as e:
 
 
 if __name__ == "__main__":
-    log.info("MicHost starting.")
+    log.info("PlugAndVoice starting.")
     launch()

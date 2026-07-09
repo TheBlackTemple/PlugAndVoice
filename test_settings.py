@@ -53,7 +53,7 @@ def hr(title=""):
 
 
 def main():
-    print(f"\nMicHost — Module 2 smoke test")
+    print(f"\nPlugAndVoice — Module 2 smoke test")
     print(f"Settings path : {SETTINGS_PATH}")
     print(f"Log path      : {LOG_PATH}")
 

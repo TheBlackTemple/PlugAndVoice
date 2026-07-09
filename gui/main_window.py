@@ -1,5 +1,5 @@
 """
-main_window.py — MicHost main window (Section 12.2).
+main_window.py — PlugAndVoice main window (Section 12.2).
 
 Layout (top → bottom, mirroring signal flow):
   Management bar    — Settings button, restart indicator
@@ -174,7 +174,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MicHost")
+        self.setWindowTitle("PlugAndVoice")
         self.setMinimumSize(480, 680)
 
         self._engine = AudioEngine()
@@ -234,7 +234,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(8, 0, 8, 0)
 
-        title = QLabel("MICHOST")
+        title = QLabel("PlugAndVoice")
         title.setStyleSheet("font-size: 11px; letter-spacing: 2px; color: #6b7280; font-weight: bold;")
         layout.addWidget(title)
         layout.addStretch()
@@ -607,7 +607,7 @@ class MainWindow(QMainWindow):
 
         if in_entry is None or out_entry is None:
             QMessageBox.warning(
-                self, "MicHost",
+                self, "PlugAndVoice",
                 "Configured audio device not found.\nPlease open Settings and re-select."
             )
             return
@@ -713,7 +713,7 @@ class MainWindow(QMainWindow):
             )
             self._restart_attempts = 0
             QMessageBox.critical(
-                self, "MicHost",
+                self, "PlugAndVoice",
                 f"Audio engine could not recover after {_MAX_RESTART_ATTEMPTS} attempts.\n\n"
                 "Please check your audio device and restart the app."
             )
@@ -838,7 +838,7 @@ class MainWindow(QMainWindow):
 
     def _post_warning(self, message: str) -> None:
         """Thread-safe warning popup via QTimer (called from worker thread)."""
-        QTimer.singleShot(0, lambda: QMessageBox.warning(self, "MicHost", message))
+        QTimer.singleShot(0, lambda: QMessageBox.warning(self, "PlugAndVoice", message))
 
     # ── Chain description management ──────────────────────────────────────────
 
@@ -877,7 +877,7 @@ class MainWindow(QMainWindow):
     def _on_add_plugin(self) -> None:
         paths = scan_vst3()
         if not paths:
-            QMessageBox.information(self, "MicHost", "No plugins found in ./vst3.")
+            QMessageBox.information(self, "PlugAndVoice", "No plugins found in ./vst3.")
             return
 
         names = [os.path.splitext(os.path.basename(p))[0] for p in paths]
@@ -1208,7 +1208,7 @@ class MainWindow(QMainWindow):
     def _delete_preset(self) -> None:
         name = self._current_preset_name()
         if (name == "-- Select a preset --"):
-            QMessageBox.information(self, "MicHost", "Cannot delete this.")
+            QMessageBox.information(self, "PlugAndVoice", "Cannot delete this.")
             return
         resp = QMessageBox.question(
             self, "Delete Preset", f"Delete preset '{name}'?",

@@ -93,24 +93,17 @@ class GaugeTheme:
 # Registry — order determines display order in SettingsView.
 # Key = settings value stored in preferences.
 GAUGE_THEMES: dict[str, GaugeTheme] = {
+
     "classic": GaugeTheme(
         name="Classic VU",
         description="Green → amber → red. The hardware VU standard.",
-        low=C_GAUGE_LOW,    # #2ecc71 green
-        mid=C_GAUGE_MID,    # #e8a030 amber
-        high=C_GAUGE_HIGH,  # #e05050 red
+        low=C_GAUGE_LOW,    # #2ecc71
+        mid=C_GAUGE_MID,    # #e8a030
+        high=C_GAUGE_HIGH,  # #e05050
         clip=C_GAUGE_CLIP,
         bg=C_GAUGE_BG,
     ),
-    "blue_ice": GaugeTheme(
-        name="Blue Ice",
-        description="Cool cyan-to-white signal path. Studio monitor aesthetic.",
-        low="#1a7fc4",
-        mid="#48b4e0",
-        high="#c8f0ff",
-        clip="#ffffff",
-        bg="#050c12",
-    ),
+
     "phosphor": GaugeTheme(
         name="Phosphor",
         description="Vintage green phosphor CRT. Oscilloscope energy.",
@@ -120,32 +113,65 @@ GAUGE_THEMES: dict[str, GaugeTheme] = {
         clip="#eaffee",
         bg="#020d06",
     ),
-    "ember": GaugeTheme(
-        name="Ember",
-        description="Deep orange to white-hot. Thermal / infrared palette.",
-        low="#7a2000",
-        mid="#e84010",
-        high="#ffb040",
-        clip="#fff0b0",
-        bg="#0d0400",
+
+    "forge": GaugeTheme(
+        name="Forge",
+        description="Black-body radiation. Cold iron → orange heat → white-hot.",
+        low="#3a0a00",      # near-black red, barely visible at rest
+        mid="#c43000",      # deep forge orange
+        high="#ff8c00",     # bright orange-amber
+        clip="#fff4c2",     # white-hot near-white
+        bg="#080200",
     ),
-    "violet": GaugeTheme(
-        name="Violet",
-        description="Purple to pink. Clean and modern.",
-        low="#5020a0",
-        mid="#9040e0",
-        high="#e060ff",
-        clip="#ffd0ff",
-        bg="#08020e",
+
+    "broadcast": GaugeTheme(
+        name="Broadcast",
+        description="PPM-style: peak programme meters from BBC/EBU console tradition.",
+        low="#005f9e",      # BBC corporate blue
+        mid="#00a0c8",      # IEC teal
+        high="#f0e030",     # PPM yellow — not red, that's the point
+        clip="#ff4040",     # clip breaks the pattern intentionally
+        bg="#060c12",
     ),
-    "monochrome": GaugeTheme(
-        name="Monochrome",
-        description="Single grey ramp. Minimal / low distraction.",
-        low="#3a3f47",
-        mid="#7a8290",
-        high="#c8cdd6",
-        clip="#ffffff",
-        bg="#0d0f11",
+
+    "abyss": GaugeTheme(
+        name="Abyss",
+        description="Deep ocean bioluminescence. Near-black to electric cyan.",
+        low="#002a3a",      # deep ocean dark teal
+        mid="#006e7a",      # bioluminescent mid
+        high="#00e8cc",     # electric cyan surface break
+        clip="#a0fff5",     # overdriven bloom
+        bg="#00080c",
+    ),
+
+    "sodium": GaugeTheme(
+        name="Sodium",
+        description="Sodium vapour streetlight ramp. Warm monochromatic amber.",
+        low="#2a1400",      # near-black amber
+        mid="#8a4800",      # mid sodium orange
+        high="#ffb000",     # peak sodium yellow
+        clip="#fff5cc",     # lamp bloom
+        bg="#0a0500",
+    ),
+
+    "lufs": GaugeTheme(
+        name="LUFS",
+        description="EBU R 128 loudness colour convention. Familiar to mastering engineers.",
+        low="#1a7a40",      # integrated green
+        mid="#c8a000",      # momentary caution yellow
+        high="#c83200",     # true peak warning
+        clip="#ff2020",     # over true peak
+        bg="#0a0c0a",
+    ),
+
+    "plasma": GaugeTheme(
+        name="Plasma",
+        description="Tesla coil discharge. Deep violet ionisation to white arc.",
+        low="#1a0038",      # near-black violet
+        mid="#7020c0",      # ionised purple
+        high="#d060ff",     # arc magenta
+        clip="#fff0ff",     # white discharge bloom
+        bg="#06000c",
     ),
 }
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-run_headless.py — MicHost headless CLI harness (Modules 1 + 2).
+run_headless.py — PlugAndVoice headless CLI harness (Modules 1 + 2).
 
 Usage:
     python run_headless.py                      # load settings, prompt for missing devices
@@ -178,7 +178,7 @@ def print_meters(payload: dict) -> None:
 def main() -> None:
     _require_imports()
 
-    parser = argparse.ArgumentParser(description="MicHost headless engine harness")
+    parser = argparse.ArgumentParser(description="PlugAndVoice headless engine harness")
     parser.add_argument("--list",     action="store_true", help="Print device table and exit")
     parser.add_argument("--settings", action="store_true", help="Print current settings and exit")
     parser.add_argument("--in",  dest="in_dev",  type=int, default=None,

@@ -1,5 +1,5 @@
 """
-gui — PySide6 front-end for MicHost.
+gui — PySide6 front-end for PlugAndVoice.
 
 Public surface:
   launch()           — create QApplication, apply stylesheet, show MainWindow.
@@ -24,7 +24,7 @@ def launch() -> None:
     from PySide6.QtGui import QPalette, QColor
 
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("MicHost")
+    app.setApplicationName("PlugAndVoice")
     app.setStyleSheet(STYLESHEET)
 
     window = MainWindow()

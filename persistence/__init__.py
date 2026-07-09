@@ -1,5 +1,5 @@
 """
-persistence — session and preset serialisation for MicHost (Sections 6.1–6.3).
+persistence — session and preset serialisation for PlugAndVoice (Sections 6.1–6.3).
 
 Public surface:
   capture_raw_state(chain_desc, active_chain) -> list[dict]

@@ -1,5 +1,5 @@
 """
-engine — headless audio engine for MicHost.
+engine — headless audio engine for PlugAndVoice.
 
 Public surface:
   AudioEngine   — the engine class (core.py)

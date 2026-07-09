@@ -64,7 +64,7 @@ _VST3_HINT = (
     "  • C:\\Program Files\\VST3\n"
     "  • C:\\Users\\<you>\\AppData\\Local\\Programs\\Common\\VST3\n\n"
     "Open settings and point the folder above to whichever location your plugins use, "
-    "then restart MicHost."
+    "then restart PlugAndVoice."
 )
 
 
@@ -77,7 +77,7 @@ class SettingsView(QDialog):
 
     def __init__(self, parent=None, device_lost: bool = False):
         super().__init__(parent)
-        self.setWindowTitle("MicHost — Settings")
+        self.setWindowTitle("PlugAndVoice — Settings")
         self.setMinimumWidth(520)
         self.setModal(True)
 
@@ -264,7 +264,7 @@ class SettingsView(QDialog):
         # Private Mode (WASAPI exclusive) toggle
         self._exclusive_check = QCheckBox("Enable Private Mode  (WASAPI Exclusive)")
         self._exclusive_check.setToolTip(
-            "Captures your mic exclusively for MicHost, "
+            "Captures your mic exclusively for PlugAndVoice, "
             "no other app can listen in. Requires WASAPI devices on both sides."
         )
         self._exclusive_check.stateChanged.connect(self._on_exclusive_toggled)
@@ -453,7 +453,7 @@ class SettingsView(QDialog):
         root.addWidget(folder_group)
 
         note = QLabel(
-            "Folder changes take effect after restarting MicHost. "
+            "Folder changes take effect after restarting PlugAndVoice. "
             "Relative paths are resolved from the application directory."
         )
         note.setProperty("class", "hint")
@@ -741,12 +741,12 @@ class SettingsView(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
 
         body = QLabel(
-            "<b>MicHost will take direct, exclusive control of your microphone.</b>"
+            "<b>PlugAndVoice will take direct, exclusive control of your microphone.</b>"
             "<br><br>"
             "✅ &nbsp;<b>Fully private</b> — no other app can intercept or listen "
             "to your raw mic while the engine is running."
             "<br><br>"
-            "⚠️ &nbsp;<b>Latency</b> — the signal goes straight to MicHost, "
+            "⚠️ &nbsp;<b>Latency</b> — the signal goes straight to PlugAndVoice, "
             "<b>latency times can improve or worsen depending on your microphone drivers.</b>"
             "<br><br>"
             "⚠️ &nbsp;<b>Your raw mic will be unavailable to other apps</b> while "
@@ -838,7 +838,7 @@ class SettingsView(QDialog):
         out_entry = self._out_combo.currentData()
 
         if in_entry is None or out_entry is None:
-            QMessageBox.warning(self, "MicHost", "Please select both input and output devices.")
+            QMessageBox.warning(self, "PlugAndVoice", "Please select both input and output devices.")
             return
 
         # Re-validate at apply time (defensive; Apply should already be disabled
