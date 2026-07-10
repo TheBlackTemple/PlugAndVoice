@@ -201,7 +201,7 @@ Note that most installers drop files in a non-obvious path:
 
 `C:\Program Files (x86)\Common Files\VST3\`
 
-We default to a "vst3" right next to the launcher for portability and flexibility, which is non standard. You can choose to use the default vendor path instead.
+We default to a "vst3" folder right next to the launcher for portability and flexibility, which is non standard. You can choose to use the default vendor path instead.
 
 ---
 
