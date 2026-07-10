@@ -67,7 +67,7 @@ If you have an microphone setup in OBS that you wanted to use everywhere else bu
 ## Requirements
 
 - Windows 10 (tested), likely works on Windows 7+ with WASAPI
-- [VB-Cable](https://vb-audio.com/Cable/) — free and well known, not bundled for legal reasons (its our competitors, ha!)
+- [VB-Cable](https://vb-audio.com/Cable/) — free and well known, not bundled for legal reasons (it's our competitors, ha!)
 - Python 3.14, if you are running from source
 
 ---
@@ -227,7 +227,7 @@ Private mode (aka Exclusive mode) is a way to load a device (a microphone, for e
 
 2.- Latency can change, for better or worse. Professional equipment may benefit from exclusive mode, but generic microphones might see even higher latency.
 
-3.- Private mode can be useful for paranoid people or those who simply want to keep their default microphone inaccessible.
+3.- Private mode can be useful for privacy-conscious people or those who simply want to keep their default microphone inaccessible.
 
 ---
 
