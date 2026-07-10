@@ -154,7 +154,7 @@ Japanese plug-in manufacturer. Clean, well-behaved plugins. Very retro.
 
 - [Download DeeGain] (https://dotec-audio.com/deegain.html)
 
-![Image](https://dotec-audio.com/images/deegain.jpg)
+![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/deegain.jpg)
 
 ---
 
