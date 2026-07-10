@@ -78,7 +78,7 @@ class SettingsView(QDialog):
     def __init__(self, parent=None, device_lost: bool = False):
         super().__init__(parent)
         self.setWindowTitle("PlugAndVoice — Settings")
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(600)
         self.setModal(True)
 
         self._devices = enumerate_devices()
