@@ -1,6 +1,6 @@
 # Plug and Voice
 
-> *Logo placeholder*
+![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/logo.png)
 
 A lightweight VST3 plugin host for your microphone. Load your plugins, apply your chain, and your processed audio becomes a virtual device usable in every app, call, and game — no per-app configuration needed.
 
