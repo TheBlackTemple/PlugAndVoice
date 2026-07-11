@@ -9,10 +9,10 @@ Pruning: when max_autosaves > 0, the oldest files beyond the cap are deleted
 after each write.  0 means unlimited.
 
 Public API:
-  write_autosave(chain_desc, max_autosaves) -> str
+  write_autosave(chain_desc, autosaves_dir, max_autosaves) -> str
       Write one autosave file.  Returns the path written, or "" on failure.
 
-  list_autosaves() -> list[dict]
+  list_autosaves(autosaves_dir) -> list[dict]
       Return [{"path": str, "timestamp": datetime}, ...] newest-first.
 
   load_autosave(path) -> list[dict]
@@ -28,11 +28,8 @@ import re
 import shutil
 import tempfile
 
-from utils.paths import app_path
-
 log = logging.getLogger(__name__)
 
-AUTOSAVES_DIR  = app_path("autosaves")
 _FNAME_RE      = re.compile(r"autosave_(\d{8}_\d{6})\.json$")
 _FNAME_FMT     = "%Y%m%d_%H%M%S"
 _AUTOSAVE_VERSION = 2
@@ -40,20 +37,20 @@ _AUTOSAVE_VERSION = 2
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def write_autosave(chain_desc: list[dict], max_autosaves: int = 0) -> str:
+def write_autosave(chain_desc: list[dict], autosaves_dir: str, max_autosaves: int = 0) -> str:
     """
-    Write one autosave file to AUTOSAVES_DIR.
+    Write one autosave file to autosaves_dir.
 
     Filename: autosave_<YYYYMMDD_HHMMSS>.json
     After writing, prunes oldest files when max_autosaves > 0.
     Returns the path written, or "" on any failure (logged, never raises).
     """
-    os.makedirs(AUTOSAVES_DIR, exist_ok=True)
+    os.makedirs(autosaves_dir, exist_ok=True)
 
     now      = datetime.datetime.now()
     stamp    = now.strftime(_FNAME_FMT)
     filename = f"autosave_{stamp}.json"
-    path     = os.path.join(AUTOSAVES_DIR, filename)
+    path     = os.path.join(autosaves_dir, filename)
 
     data = {
         "version": _AUTOSAVE_VERSION,
@@ -67,23 +64,23 @@ def write_autosave(chain_desc: list[dict], max_autosaves: int = 0) -> str:
     log.info("Autosave written (%d slot(s)) → %s", len(chain_desc), path)
 
     if max_autosaves > 0:
-        _prune(max_autosaves)
+        _prune(autosaves_dir, max_autosaves)
 
     return path
 
 
-def list_autosaves() -> list[dict]:
+def list_autosaves(autosaves_dir: str) -> list[dict]:
     """
-    Return all autosave entries in AUTOSAVES_DIR, newest-first.
+    Return all autosave entries in autosaves_dir, newest-first.
 
     Each entry: {"path": str, "timestamp": datetime.datetime}
     Files that don't match the naming pattern are silently ignored.
     """
-    if not os.path.isdir(AUTOSAVES_DIR):
+    if not os.path.isdir(autosaves_dir):
         return []
 
     entries = []
-    for path in glob.glob(os.path.join(AUTOSAVES_DIR, "autosave_*.json")):
+    for path in glob.glob(os.path.join(autosaves_dir, "autosave_*.json")):
         m = _FNAME_RE.search(os.path.basename(path))
         if not m:
             continue
@@ -124,9 +121,9 @@ def load_autosave(path: str) -> list[dict]:
 
 # ── Internals ─────────────────────────────────────────────────────────────────
 
-def _prune(max_autosaves: int) -> None:
+def _prune(autosaves_dir: str, max_autosaves: int) -> None:
     """Delete oldest autosave files beyond max_autosaves."""
-    entries = list_autosaves()          # already newest-first
+    entries = list_autosaves(autosaves_dir)  # already newest-first
     to_delete = entries[max_autosaves:] # everything past the cap
     for entry in to_delete:
         try:

@@ -13,7 +13,7 @@ from source or from a PyInstaller bundle. Do NOT hardcode absolute paths
 here — they break when the folder is moved.
 """
 
-SETTINGS_VERSION = 4
+SETTINGS_VERSION = 5
 from utils.paths import app_path, asset_path
 
 SETTINGS_PATH = app_path("user_data", "host_settings.json")
@@ -21,6 +21,7 @@ LOG_PATH      = app_path("user_data", "host.log")
 SESSION_PATH  = app_path("user_data", "session.json")
 VST3_DIR      = app_path("vst3")
 PRESETS_DIR   = app_path("presets")
+AUTOSAVES_DIR = app_path("autosaves")
 
 # Default settings dict — shape must match Section 6.4 schema.
 DEFAULTS: dict = {
@@ -35,9 +36,9 @@ DEFAULTS: dict = {
     "last_preset": "",
     "max_autosaves": 0,         # 0 = unlimited
     "exclusive_mode": False,    # WASAPI exclusive mode; False = shared
-    "vst3_dir":     VST3_DIR,
-    "userdata_dir": "user_data",
-    "presets_dir":  PRESETS_DIR,
+    "vst3_dir":      VST3_DIR,
+    "presets_dir":   PRESETS_DIR,
+    "autosaves_dir": AUTOSAVES_DIR,
     "hotkeys": {"mute": "", "start": "", "stop": "", "presets": {}},
     "gauge_theme": "classic",
 }

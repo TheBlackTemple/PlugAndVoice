@@ -37,7 +37,7 @@ from settings import (
     vbcable_present, asio_available,
     PairSeverity,
     SUPPORTED_SAMPLE_RATES, SUPPORTED_BLOCK_SIZES,
-    VST3_DIR, PRESETS_DIR,
+    VST3_DIR, PRESETS_DIR, AUTOSAVES_DIR
 )
 from utils.startup import set_run_on_startup, is_run_on_startup
 from .styles import C_TEXT_WARN, C_TEXT_ERR, GAUGE_THEMES, DEFAULT_GAUGE_THEME, DbGauge
@@ -302,28 +302,8 @@ class SettingsView(QDialog):
         )
         root.addWidget(self._startup_check)
 
-        # ── Autosave cap ──────────────────────────────────────────────────────
-        autosave_row = QHBoxLayout()
-        autosave_lbl = QLabel("Max autosaves:")
-        autosave_lbl.setFixedWidth(110)
-        autosave_row.addWidget(autosave_lbl)
-
-        self._max_autosaves_spin = QSpinBox()
-        self._max_autosaves_spin.setRange(0, 999)
-        self._max_autosaves_spin.setFixedWidth(82)
-        self._max_autosaves_spin.setSpecialValueText("Unlimited")
-        self._max_autosaves_spin.setToolTip(
-            "Maximum number of autosaves to keep.\n0 = unlimited."
-        )
-        autosave_row.addWidget(self._max_autosaves_spin)
-        autosave_hint = QLabel("(0 = unlimited)")
-        autosave_hint.setProperty("class", "hint")
-        autosave_row.addWidget(autosave_hint)
-        autosave_row.addStretch()
-        root.addLayout(autosave_row)
-
         root.addStretch()
-
+        
     def _build_console_tab(self, root: QVBoxLayout) -> None:
         """
         Console tab — live log output with per-level visibility toggles.
@@ -541,45 +521,62 @@ class SettingsView(QDialog):
         layout.addWidget(line)
 
     def _build_folders_tab(self, root: QVBoxLayout) -> None:
-        """Builds the Folders tab: path pickers for VST3, user data, and presets."""
+        """Builds the Folders tab: path pickers for VST3, presets, and autosaves."""
 
+        # ── Plugin folders ────────────────────────────────────────────────────
         folder_group = QGroupBox("PLUGIN FOLDERS")
         folder_form = QFormLayout(folder_group)
         folder_form.setLabelAlignment(Qt.AlignRight)
         folder_form.setSpacing(8)
 
-        # VST3 folder
         self._vst3_edit, vst3_row = self._make_path_row()
         folder_form.addRow("VST3 folder:", vst3_row)
 
-        # No-plugins warning — hidden until _check_vst3_folder() fires.
         self._vst3_hint_label = QLabel(_VST3_HINT)
         self._vst3_hint_label.setProperty("class", "warn")
         self._vst3_hint_label.setWordWrap(True)
         self._vst3_hint_label.setVisible(False)
         folder_form.addRow("", self._vst3_hint_label)
 
-        # User data folder
-        self._userdata_edit, userdata_row = self._make_path_row()
-        folder_form.addRow("User data:", userdata_row)
-
-        # Presets / autosaves folder
-        self._presets_edit, presets_row = self._make_path_row()
-        folder_form.addRow("Presets / autosaves:", presets_row)
-
         root.addWidget(folder_group)
 
-        note = QLabel(
-            "Folder changes take effect after restarting PlugAndVoice. "
-            "Relative paths are resolved from the application directory."
-        )
+        # ── Presets ───────────────────────────────────────────────────────────
+        presets_group = QGroupBox("PRESETS")
+        presets_form = QFormLayout(presets_group)
+        presets_form.setLabelAlignment(Qt.AlignRight)
+        presets_form.setSpacing(8)
+
+        self._presets_edit, presets_row = self._make_path_row()
+        presets_form.addRow("Presets folder:", presets_row)
+
+        root.addWidget(presets_group)
+
+        # ── Autosaves ─────────────────────────────────────────────────────────
+        autosaves_group = QGroupBox("AUTOSAVES")
+        autosaves_form = QFormLayout(autosaves_group)
+        autosaves_form.setLabelAlignment(Qt.AlignRight)
+        autosaves_form.setSpacing(8)
+
+        self._autosaves_edit, autosaves_row = self._make_path_row()
+        autosaves_form.addRow("Autosaves folder:", autosaves_row)
+
+        self._max_autosaves_spin = QSpinBox()
+        self._max_autosaves_spin.setRange(0, 999)
+        self._max_autosaves_spin.setSpecialValueText("Unlimited")
+        self._max_autosaves_spin.setFixedWidth(100)
+        self._max_autosaves_spin.setToolTip("Maximum number of autosaves to keep.\n0 = unlimited.")
+        autosaves_form.addRow("Keep last N autosaves:", self._max_autosaves_spin)
+
+        root.addWidget(autosaves_group)
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        note = QLabel("Folder changes take effect after restarting PlugAndVoice.")
         note.setProperty("class", "hint")
         note.setWordWrap(True)
         root.addWidget(note)
 
         root.addStretch()
 
-        # Wire browse buttons
         self._vst3_edit.textChanged.connect(self._check_vst3_folder)
 
     def _make_path_row(self) -> tuple[QLineEdit, QHBoxLayout]:
@@ -704,11 +701,11 @@ class SettingsView(QDialog):
         self._vst3_edit.setText(
             self._current_settings.get("vst3_dir", VST3_DIR)
         )
-        self._userdata_edit.setText(
-            self._current_settings.get("userdata_dir", "./user_data")
-        )
         self._presets_edit.setText(
             self._current_settings.get("presets_dir", PRESETS_DIR)
+        )
+        self._autosaves_edit.setText(
+            self._current_settings.get("autosaves_dir", AUTOSAVES_DIR)
         )
 
         # Re-connect and run initial validation.
@@ -998,8 +995,8 @@ class SettingsView(QDialog):
         new_settings["autostart"]      = autostart
         new_settings["max_autosaves"]  = self._max_autosaves_spin.value()
         new_settings["vst3_dir"]       = self._vst3_edit.text().strip() or VST3_DIR
-        new_settings["userdata_dir"]   = self._userdata_edit.text().strip() or "./user_data"
         new_settings["presets_dir"]    = self._presets_edit.text().strip() or PRESETS_DIR
+        new_settings["autosaves_dir"]  = self._autosaves_edit.text().strip() or AUTOSAVES_DIR
         new_settings["run_on_startup"] = self._startup_check.isChecked()
         set_run_on_startup(self._startup_check.isChecked())
         self._hotkeys_tab.write_settings(new_settings)

@@ -41,6 +41,7 @@ from .devices import (
     scan_vst3,
 )
 from .defaults import (
+    AUTOSAVES_DIR,
     DEFAULTS,
     SETTINGS_PATH,
     LOG_PATH,
@@ -60,6 +61,6 @@ __all__ = [
     "rank_input_candidates", "rank_output_candidates", "validate_pair",
     "validate_devices", "asio_available", "vbcable_present", "scan_vst3",
     # defaults
-    "DEFAULTS", "SETTINGS_PATH", "LOG_PATH", "VST3_DIR", "PRESETS_DIR",
-    "SESSION_PATH", "SUPPORTED_SAMPLE_RATES", "SUPPORTED_BLOCK_SIZES",
+    "AUTOSAVES_DIR", "DEFAULTS", "SETTINGS_PATH", "LOG_PATH", "VST3_DIR",
+    "PRESETS_DIR", "SESSION_PATH", "SUPPORTED_SAMPLE_RATES", "SUPPORTED_BLOCK_SIZES",
 ]

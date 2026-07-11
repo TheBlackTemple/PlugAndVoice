@@ -21,6 +21,7 @@ import shutil
 import tempfile
 
 from .defaults import (
+    AUTOSAVES_DIR,
     DEFAULTS,
     LOG_PATH,
     PRESETS_DIR,
@@ -76,8 +77,8 @@ def setup_logging(level: int = logging.DEBUG) -> None:
 # ---------------------------------------------------------------------------
 
 def ensure_dirs() -> None:
-    """Create ./vst3 and ./presets if they don't exist."""
-    for d in (VST3_DIR, PRESETS_DIR):
+    """Create vst3, presets, and autosaves directories if they don't exist."""
+    for d in (VST3_DIR, PRESETS_DIR, AUTOSAVES_DIR):
         os.makedirs(d, exist_ok=True)
         log.debug("Directory ensured: %s", os.path.abspath(d))
 
