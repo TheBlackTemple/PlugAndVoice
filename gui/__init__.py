@@ -32,7 +32,9 @@ def launch() -> None:
     app.setQuitOnLastWindowClosed(False)
     
     window = MainWindow()
-    window.show()
+    
+    if "--minimized" not in sys.argv:
+        window.show()
 
     sys.exit(app.exec())
 

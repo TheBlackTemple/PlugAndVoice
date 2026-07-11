@@ -13,6 +13,7 @@ at the moment of writing, so moving the folder and re-saving self-heals it.
 """
 
 import logging
+import os
 import sys
 
 log = logging.getLogger(__name__)
@@ -40,7 +41,10 @@ def set_run_on_startup(enable: bool) -> bool:
             winreg.KEY_SET_VALUE,
         ) as key:
             if enable:
-                exe = f'"{sys.executable}"'
+                if getattr(sys, 'frozen', False):
+                    exe = f'"{sys.executable}" --minimized'
+                else:
+                    exe = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}" --minimized'
                 winreg.SetValueEx(key, _APP_NAME, 0, winreg.REG_SZ, exe)
                 log.info("Startup entry added: %s", exe)
             else:
