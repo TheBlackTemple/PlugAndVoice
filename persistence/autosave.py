@@ -1,7 +1,7 @@
 """
 autosave.py — session autosave (persistence package).
 
-Autosaves are written on every engine halt into ./autosaves/ as flat JSON
+Autosaves are written on every engine halt into <app_root>/autosaves/ as flat JSON
 files named autosave_<YYYYMMDD_HHMMSS>.json.  The schema is identical to
 session.json (version + chain), so load paths are shared.
 
@@ -28,9 +28,11 @@ import re
 import shutil
 import tempfile
 
+from utils.paths import app_path
+
 log = logging.getLogger(__name__)
 
-AUTOSAVES_DIR  = "./autosaves"
+AUTOSAVES_DIR  = app_path("autosaves")
 _FNAME_RE      = re.compile(r"autosave_(\d{8}_\d{6})\.json$")
 _FNAME_FMT     = "%Y%m%d_%H%M%S"
 _AUTOSAVE_VERSION = 2
