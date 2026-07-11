@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
 
         def on_missing(name: str):
             QMessageBox.warning(self, "Plugin Not Found",
-                f"Plugin '{name}' was not found in ./vst3 and has been skipped.")
+                f"Plugin '{name}' was not found in vst3 folder and has been skipped.")
 
         def on_load_error(name: str, e: Exception):
             QMessageBox.warning(self, "Plugin Load Failed",
