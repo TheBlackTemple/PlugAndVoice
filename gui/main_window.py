@@ -1344,9 +1344,13 @@ class MainWindow(QMainWindow):
 
         self._unregister_all_hotkeys()
 
+        self._tray.hide()
+        self._tray.deleteLater()
+        QApplication.processEvents()
+
         log.info("Shutdown complete.")
         event.accept()
-
+        QApplication.quit()  # ← explicitly exit the event loop
 
     def _setup_tray(self) -> None:
         """

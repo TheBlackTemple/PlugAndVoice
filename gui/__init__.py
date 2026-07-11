@@ -28,6 +28,9 @@ def launch() -> None:
     app.setStyleSheet(STYLESHEET)
     app.setWindowIcon(QIcon(asset_path("resources", "icon.ico")))
 
+    # Prevent Qt from quitting the event loop when the window is hidden to tray
+    app.setQuitOnLastWindowClosed(False)
+    
     window = MainWindow()
     window.show()
 
