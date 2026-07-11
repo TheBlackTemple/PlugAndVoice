@@ -18,6 +18,7 @@ ensure_dirs()
 
 import logging
 log = logging.getLogger("main")
+logging.getLogger().setLevel(logging.DEBUG)
 
 try:
     from gui import launch

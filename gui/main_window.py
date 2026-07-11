@@ -28,7 +28,7 @@ import threading
 import time
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QObject
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QMainWindow, QMessageBox, QPushButton,
@@ -80,6 +80,18 @@ except ImportError:
     _WIN32_AVAILABLE = False
     log.warning("pywin32 not available — editor WM_CLOSE will not work.")
 
+# ── Logging ────────────────────────────────────────────────────────
+
+class QtLogHandler(QObject, logging.Handler):
+    log_signal = Signal(str, int)  # formatted message, level number
+
+    def __init__(self):
+        QObject.__init__(self)
+        logging.Handler.__init__(self)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        msg = self.format(record)
+        self.log_signal.emit(msg, record.levelno)
 
 # ── Plugin slot widget ────────────────────────────────────────────────────────
 
@@ -189,6 +201,7 @@ class MainWindow(QMainWindow):
         self._muted                  = False
         self._restart_attempts       = 0     # consecutive watchdog-triggered restart attempts
 
+        self._setup_logging()
         self._build_ui()
         self._setup_meter_timer()
         self._load_presets()
@@ -423,10 +436,29 @@ class MainWindow(QMainWindow):
     def _open_settings(self, force: bool = False, device_lost: bool = False) -> None:
         view = SettingsView(self, device_lost=device_lost)
         view.settings_applied.connect(self._on_settings_applied)
-        
-        # if force:
+        self._log_handler.log_signal.connect(view.append_log)
+        view.finished.connect(lambda: self._log_handler.log_signal.disconnect(view.append_log))
+
+        for msg, level in self._log_buffer:   # ← replay startup logs
+            view.append_log(msg, level)
+
         view.exec()
         
+
+    def _setup_logging(self) -> None:
+        self._log_handler = QtLogHandler()
+        self._log_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
+                datefmt="%H:%M:%S",
+            )
+        )
+        self._log_buffer: list[tuple[str, int]] = []
+        self._log_handler.log_signal.connect(
+            lambda msg, level: self._log_buffer.append((msg, level))
+        )
+        logging.getLogger().addHandler(self._log_handler)
+        print(logging.getLogger().level)
 
     @Slot()
     def _open_autosaves(self) -> None:

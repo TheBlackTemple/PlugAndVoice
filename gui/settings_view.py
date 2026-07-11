@@ -21,12 +21,12 @@ Signals:
 import logging
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QColor
+from PySide6.QtGui import QDesktopServices, QColor, QTextCharFormat, QFont
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QGroupBox, QLabel, QLineEdit, QMessageBox,
     QPushButton, QSpinBox, QTabWidget, QVBoxLayout, QHBoxLayout, QFrame,
-    QWidget,
+    QTextEdit, QWidget,
 )
 
 from settings import (
@@ -151,6 +151,15 @@ class SettingsView(QDialog):
         themes_layout.setContentsMargins(0, 8, 0, 0)
         self._tabs.addTab(themes_page, "Themes")
         self._build_themes_tab(themes_layout)
+
+        # ── Console tab ───────────────────────────────────────────────────────
+        console_page = QWidget()
+        console_page.setObjectName("tabPage")
+        console_layout = QVBoxLayout(console_page)
+        console_layout.setSpacing(10)
+        console_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(console_page, "Console")
+        self._build_console_tab(console_layout)
 
         # ── Shared bottom: buttons ────────────────────────────────────────────
         self._add_separator(root)
@@ -314,6 +323,105 @@ class SettingsView(QDialog):
         root.addLayout(autosave_row)
 
         root.addStretch()
+
+    def _build_console_tab(self, root: QVBoxLayout) -> None:
+        """
+        Console tab — live log output with per-level visibility toggles.
+
+        The output widget is a read-only QTextEdit rendered in a monospace dark
+        theme so it feels like a real terminal.  Log records are forwarded here
+        by append_log(), which is connected to a QtLogHandler in MainWindow.
+
+        Toggles control which levels are *displayed*; the root logger always
+        captures everything so toggling is non-destructive.
+        """
+        # ── Level filter toggles ──────────────────────────────────────────────
+        filter_group = QGroupBox("LOG LEVEL FILTERS")
+        filter_row   = QHBoxLayout(filter_group)
+        filter_row.setSpacing(16)
+
+        self._console_checks: dict[int, QCheckBox] = {}
+        level_defaults = {
+            logging.DEBUG:    (False, "DEBUG",    "#888888"),
+            logging.INFO:     (True,  "INFO",     "#d4d4d4"),
+            logging.WARNING:  (True,  "WARNING",  "#dcdcaa"),
+            logging.ERROR:    (True,  "ERROR",    "#f44747"),
+            logging.CRITICAL: (True,  "CRITICAL", "#ff5555"),
+        }
+        for level, (default, label, colour) in level_defaults.items():
+            cb = QCheckBox(label)
+            cb.setChecked(default)
+            cb.setStyleSheet(f"QCheckBox {{ color: {colour}; }}")
+            cb.setToolTip(f"Show / hide {label} messages in the console output")
+            filter_row.addWidget(cb)
+            self._console_checks[level] = cb
+
+        filter_row.addStretch()
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedWidth(60)
+        clear_btn.setToolTip("Clear all console output")
+        clear_btn.clicked.connect(self._on_console_clear)
+        filter_row.addWidget(clear_btn)
+
+        root.addWidget(filter_group)
+
+        # ── Output area ───────────────────────────────────────────────────────
+        self._console_output = QTextEdit()
+        self._console_output.setReadOnly(True)
+        self._console_output.setFont(QFont("Courier New", 9))
+        self._console_output.setStyleSheet(
+            "QTextEdit {"
+            "  background-color: #1e1e1e;"
+            "  color: #d4d4d4;"
+            "  border: 1px solid #333;"
+            "}"
+        )
+        self._console_output.setMinimumHeight(260)
+        root.addWidget(self._console_output)
+
+        # Colour map mirrors the checkbox colours above.
+        self._console_level_colors: dict[int, str] = {
+            logging.DEBUG:    "#888888",
+            logging.INFO:     "#d4d4d4",
+            logging.WARNING:  "#dcdcaa",
+            logging.ERROR:    "#f44747",
+            logging.CRITICAL: "#ff5555",
+        }
+
+    # ── Console helpers ───────────────────────────────────────────────────────
+
+    def append_log(self, message: str, level: int = logging.INFO) -> None:
+        """
+        Append a formatted log line to the console output widget.
+
+        Called by the QtLogHandler signal connected in MainWindow.
+        Silently drops records whose level checkbox is unchecked.
+        Safe to call from any thread (Qt signal delivery is always on the
+        main thread when connected with the default AutoConnection).
+        """
+        if not hasattr(self, "_console_output"):
+            return  # tab not yet built (shouldn't happen, but guard anyway)
+
+        cb = self._console_checks.get(level)
+        if cb is not None and not cb.isChecked():
+            return
+
+        colour = self._console_level_colors.get(level, "#d4d4d4")
+        fmt    = QTextCharFormat()
+        fmt.setForeground(QColor(colour))
+
+        cursor = self._console_output.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.setCharFormat(fmt)
+        cursor.insertText(message + "\n")
+        self._console_output.setTextCursor(cursor)
+        self._console_output.ensureCursorVisible()
+
+    def _on_console_clear(self) -> None:
+        """Wipe all text from the console output area."""
+        if hasattr(self, "_console_output"):
+            self._console_output.clear()
 
     def _build_themes_tab(self, root: QVBoxLayout) -> None:
         """
