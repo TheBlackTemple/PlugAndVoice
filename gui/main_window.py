@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PlugAndVoice")
-        self.setMinimumSize(480, 680)
+        self.setMinimumSize(550, 720)
 
         self._engine = AudioEngine()
         self._settings = load_settings()
