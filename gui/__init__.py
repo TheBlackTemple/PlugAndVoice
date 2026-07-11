@@ -12,7 +12,7 @@ Public surface:
 from .styles import DbGauge, STYLESHEET
 from .settings_view import SettingsView
 from .main_window import MainWindow
-
+from utils.paths import asset_path
 
 def launch() -> None:
     """
@@ -21,11 +21,12 @@ def launch() -> None:
     """
     import sys
     from PySide6.QtWidgets import QApplication
-    from PySide6.QtGui import QPalette, QColor
+    from PySide6.QtGui import QIcon
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("PlugAndVoice")
     app.setStyleSheet(STYLESHEET)
+    app.setWindowIcon(QIcon(asset_path("resources", "icon.ico")))
 
     window = MainWindow()
     window.show()

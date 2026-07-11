@@ -33,7 +33,9 @@ from PySide6.QtWidgets import (
     QComboBox, QDialog, QGroupBox, QHBoxLayout, QInputDialog,
     QLabel, QMainWindow, QMessageBox, QPushButton,
     QScrollArea, QSizePolicy, QVBoxLayout, QWidget, QFrame,
+    QSystemTrayIcon, QMenu
 )
+from PySide6.QtGui import QIcon, QAction
 
 from engine import AudioEngine
 from settings import (
@@ -49,6 +51,7 @@ from persistence import (
 )
 from .styles import DbGauge, C_TEXT_WARN, DEFAULT_GAUGE_THEME
 from .settings_view import SettingsView
+from utils.paths import asset_path
 
 log = logging.getLogger(__name__)
 
@@ -196,6 +199,8 @@ class MainWindow(QMainWindow):
 
         # Startup: validate devices, optionally autostart
         self._on_startup()
+        self._quitting = False   # True only when Quit is chosen from tray menu
+        self._setup_tray()
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -1311,20 +1316,29 @@ class MainWindow(QMainWindow):
     # Mandatory order. Do not reorder (Section 11).
 
     def closeEvent(self, event) -> None:
-        from PySide6.QtWidgets import QApplication
+        # Hide to tray when the user clicks ×; only shut down on Quit from menu.
+        if not self._quitting:
+            event.ignore()
+            self.hide()
+            self._tray.showMessage(
+                "PlugAndVoice",
+                "Running in the background. Right-click the tray icon to quit.",
+                QSystemTrayIcon.Information,
+                2500,
+            )
+            return
 
+        # Real shutdown — triggered by _tray_quit().
+        from PySide6.QtWidgets import QApplication
         log.info("Shutdown initiated.")
 
-        # Signal intent, disable UI, stop meter timer
         self._set_ui_interactive(False)
         self._meter_timer.stop()
         QApplication.processEvents()
 
-        # Signal worker threads to abort
         self._shutdown_event.set()
         self._stop_engine()
 
-        # Save session + settings to disk
         save_session(self._chain_desc, SESSION_PATH)
         save_settings(self._settings)
 
@@ -1332,6 +1346,57 @@ class MainWindow(QMainWindow):
 
         log.info("Shutdown complete.")
         event.accept()
+
+
+    def _setup_tray(self) -> None:
+        """
+        Create the system tray icon and context menu.
+
+        The tray is the sole persistent UI while the window is hidden.
+        Double-click or Show restores the window.
+        Quit is the only path that actually exits the process.
+        """
+        icon = QIcon(asset_path("resources", "icon.ico"))
+
+        self._tray = QSystemTrayIcon(icon, parent=self)
+        self._tray.setToolTip("PlugAndVoice")
+
+        menu = QMenu()
+
+        show_action = QAction("Show", self)
+        show_action.triggered.connect(self._tray_show)
+        menu.addAction(show_action)
+
+        menu.addSeparator()
+
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._open_settings)  # your existing slot
+        menu.addAction(settings_action)
+
+        menu.addSeparator()
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._tray_quit)
+        menu.addAction(quit_action)
+
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _tray_show(self) -> None:
+        """Restore and focus the main window."""
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _tray_quit(self) -> None:
+        """Real exit — flag so closeEvent runs the shutdown path."""
+        self._quitting = True
+        self.close()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._tray_show()
 
 # ── Autosave browser dialog ───────────────────────────────────────────────────
 

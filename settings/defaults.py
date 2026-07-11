@@ -1,37 +1,42 @@
 """
-defaults.py — settings schema version and default values.
+settings/defaults.py — settings schema version and default values.
 
 The settings file is human-readable JSON, generated on first launch
 if missing. Deleting it is safe — it regenerates with these defaults.
+
+PATH NOTE
+---------
+Path constants here are bare relative strings (no leading "./").
+They are resolved to absolute paths at runtime via utils.paths.app_path()
+in settings/__init__.py, which anchors them correctly whether running
+from source or from a PyInstaller bundle. Do NOT hardcode absolute paths
+here — they break when the folder is moved.
 """
 
 SETTINGS_VERSION = 4
+from utils.paths import app_path, asset_path
 
-# Paths (relative to working directory)
-SETTINGS_PATH = "./user_data/host_settings.json"
-LOG_PATH = "./user_data/host.log"
-VST3_DIR = "./vst3"
-PRESETS_DIR = "./presets"
-SESSION_PATH = "./user_data/session.json"
+SETTINGS_PATH = app_path("user_data", "host_settings.json")
+LOG_PATH      = app_path("user_data", "host.log")
+SESSION_PATH  = app_path("user_data", "session.json")
+VST3_DIR      = app_path("vst3")
+PRESETS_DIR   = app_path("presets")
 
 # Default settings dict — shape must match Section 6.4 schema.
-# input_device: None means "not yet configured" (first-run gate).
-# output_device: VB-Cable name as the canonical suggestion; stored as
-#   a plain name string. Device lookup at start time uses name-match
-#   against the live enumeration (Section 8.6).
 DEFAULTS: dict = {
     "version": SETTINGS_VERSION,
-    "samplerate": None,      # None = use device native rate (Section 5.1)
+    "samplerate": None,         # None = use device native rate (Section 5.1)
     "blocksize": 256,
-    "input_device": None,    # None = not yet configured
-    "output_device": None,   # None = not yet configured
+    "input_device": None,       # None = not yet configured
+    "output_device": None,      # None = not yet configured
     "asio": False,
     "autostart": False,
-    "last_preset": "",       # Name of last active preset; restored on startup.
-    "max_autosaves": 0,      # Per-preset autosave cap; 0 = unlimited.
-    "exclusive_mode": False, # WASAPI exclusive mode (Private Mode); False = shared.
+    "run_on_startup": False,    # Register app in Windows startup (HKCU run key)
+    "last_preset": "",
+    "max_autosaves": 0,         # 0 = unlimited
+    "exclusive_mode": False,    # WASAPI exclusive mode; False = shared
     "vst3_dir":     VST3_DIR,
-    "userdata_dir": "./user_data",
+    "userdata_dir": "user_data",
     "presets_dir":  PRESETS_DIR,
     "hotkeys": {"mute": "", "start": "", "stop": "", "presets": {}},
     "gauge_theme": "classic",

@@ -39,6 +39,7 @@ from settings import (
     SUPPORTED_SAMPLE_RATES, SUPPORTED_BLOCK_SIZES,
     VST3_DIR, PRESETS_DIR,
 )
+from utils.startup import set_run_on_startup, is_run_on_startup
 from .styles import C_TEXT_WARN, C_TEXT_ERR, GAUGE_THEMES, DEFAULT_GAUGE_THEME, DbGauge
 from .hotkeys_tab import HotkeysTab
 from persistence import list_presets 
@@ -283,6 +284,14 @@ class SettingsView(QDialog):
         # ── Autostart engine ──────────────────────────────────────────────────
         self._remember_check = QCheckBox("Autostart engine on next launch")
         root.addWidget(self._remember_check)
+
+        # ── Autorun with windows ──────────────────────────────────────────────────
+        self._startup_check = QCheckBox("Run PlugAndVoice on Windows startup")
+        self._startup_check.setToolTip(
+            "Adds PlugAndVoice to the Windows startup registry (HKCU).\n"
+            "The app will launch automatically when you log in."
+        )
+        root.addWidget(self._startup_check)
 
         # ── Autosave cap ──────────────────────────────────────────────────────
         autosave_row = QHBoxLayout()
@@ -573,6 +582,10 @@ class SettingsView(QDialog):
 
         # Remember / autostart
         self._remember_check.setChecked(bool(self._current_settings.get("autostart", False)))
+
+        # Read live from registry — stays correct even if the user toggled it
+        # externally (e.g. via Task Manager's Startup tab).
+        self._startup_check.setChecked(is_run_on_startup())
 
         # Max autosaves
         self._max_autosaves_spin.setValue(
@@ -879,6 +892,8 @@ class SettingsView(QDialog):
         new_settings["vst3_dir"]       = self._vst3_edit.text().strip() or VST3_DIR
         new_settings["userdata_dir"]   = self._userdata_edit.text().strip() or "./user_data"
         new_settings["presets_dir"]    = self._presets_edit.text().strip() or PRESETS_DIR
+        new_settings["run_on_startup"] = self._startup_check.isChecked()
+        set_run_on_startup(self._startup_check.isChecked())
         self._hotkeys_tab.write_settings(new_settings)
 
         # Gauge theme — persist selected key
