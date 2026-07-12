@@ -41,7 +41,7 @@ from engine import AudioEngine
 from settings import (
     load_settings, save_settings, scan_vst3,
     find_device_by_name, enumerate_devices,
-    SESSION_PATH, PRESETS_DIR, AUTOSAVES_DIR
+    SESSION_PATH, PRESETS_DIR, AUTOSAVES_DIR, VST3_DIR
 )
 from persistence import (
     capture_raw_state, save_session, load_session,
@@ -912,9 +912,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _on_add_plugin(self) -> None:
-        paths = scan_vst3()
+        paths = scan_vst3(self._settings.get("vst3_dir", VST3_DIR))
         if not paths:
-            QMessageBox.information(self, "PlugAndVoice", "No plugins found in ./vst3.")
+            QMessageBox.information(self, "PlugAndVoice", "No plugins found in " + self._settings.get("vst3_dir", VST3_DIR))
             return
 
         names = [os.path.splitext(os.path.basename(p))[0] for p in paths]
@@ -1141,18 +1141,18 @@ class MainWindow(QMainWindow):
         Restores the last session (session.json) as the active chain.
         If no presets exist, creates a 'Default' preset.
         """
-        presets_list = list_presets(PRESETS_DIR)
+        presets_list = list_presets(self._settings.get("presets_dir", PRESETS_DIR))
 
         self._presets: dict[str, dict] = {}
 
         for data in presets_list:
-            name = data.get("name", "Unnamed")
+            name = data.get("name", "UNKNOWN")
             self._presets[name] = data
 
         if not self._presets:
             default_data = {"version": 1, "name": "Default", "chain": []}
             self._presets["Default"] = default_data
-            save_preset("Default", [], PRESETS_DIR)
+            save_preset("Default", [], self._settings.get("presets_dir", PRESETS_DIR))
 
         self._preset_combo.blockSignals(True)
         self._preset_combo.clear()
@@ -1189,10 +1189,10 @@ class MainWindow(QMainWindow):
         
     
     def _apply_preset_by_name(self, name: str) -> None:
-        log.info("Applying preset: " + os.path.join(PRESETS_DIR, f"{name}.json"))
+        log.info("Applying preset: " + os.path.join(self._settings.get("presets_dir", PRESETS_DIR), f"{name}.json"))
 
         def mutate():
-            self._chain_desc = load_preset(os.path.join(PRESETS_DIR, f"{name}.json")).get("chain", [])
+            self._chain_desc = load_preset(os.path.join(self._settings.get("presets_dir", PRESETS_DIR), f"{name}.json")).get("chain", [])
 
         self._trigger_restart(mutate=mutate)
 
@@ -1249,7 +1249,7 @@ class MainWindow(QMainWindow):
         self._trigger_restart(mutate=mutate)
 
     def _save_preset(self, data : dict) -> None:
-        save_preset(data["name"], data["chain"], PRESETS_DIR)
+        save_preset(data["name"], data["chain"], self._settings.get("presets_dir", PRESETS_DIR))
 
     @Slot()
     def _delete_preset(self) -> None:
@@ -1266,7 +1266,7 @@ class MainWindow(QMainWindow):
         self._presets.pop(name, None)
         import re
         safe = re.sub(r"[^\w\- ]", "_", name)
-        delete_preset(os.path.join(PRESETS_DIR, f"{safe}.json"))
+        delete_preset(os.path.join(self._settings.get("presets_dir", PRESETS_DIR), f"{safe}.json"))
         idx = self._preset_combo.findText(name)
         if idx >= 0:
             self._preset_combo.removeItem(idx)
@@ -1274,7 +1274,7 @@ class MainWindow(QMainWindow):
         if not self._presets:
             default_data = {"version": 1, "name": "Default", "chain": []}
             self._presets["Default"] = default_data
-            save_preset("Default", [], PRESETS_DIR)
+            save_preset("Default", [], self._settings.get("presets_dir", PRESETS_DIR))
             self._preset_combo.addItem("Default")
             self._preset_combo.setCurrentText("Default")
 
