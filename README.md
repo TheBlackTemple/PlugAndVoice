@@ -88,7 +88,7 @@ If you have an microphone setup in OBS that you wanted to use everywhere else bu
 
 ### Running the exe
 
-> *Packaged releases coming soon — check back here for a one-click download.*
+- Download latest release [HERE](https://github.com/TheBlackTempleOrg/PlugAndVoice/releases/download/v0.1.0-alpha/PlugAndVoice-0.1.0.zip)
 
 -Unzip the file by right-clicking the downloaded .zip and extracting the files.
 
