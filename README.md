@@ -59,8 +59,8 @@ If you have an microphone setup in OBS that you wanted to use everywhere else bu
 **Setup**
 - Device picker with recommended device hints
 - Configurable folder paths — `./vst3`, presets, and user data all in one place
-- Run on Windows startup *(planned)*
-- Hide on tray *(planned)*
+- Run on Windows startup
+- Hide on tray
 
 ---
 

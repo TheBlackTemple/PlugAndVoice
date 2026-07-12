@@ -161,6 +161,15 @@ class SettingsView(QDialog):
         self._tabs.addTab(console_page, "Console")
         self._build_console_tab(console_layout)
 
+        # ── About tab ─────────────────────────────────────────────────────────────
+        about_page = QWidget()
+        about_page.setObjectName("tabPage")
+        about_layout = QVBoxLayout(about_page)
+        about_layout.setSpacing(12)
+        about_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(about_page, "About")
+        self._build_about_tab(about_layout)
+
         # ── Shared bottom: buttons ────────────────────────────────────────────
         self._add_separator(root)
 
@@ -614,6 +623,68 @@ class SettingsView(QDialog):
             for entry in os.scandir(folder)
         )
         self._vst3_hint_label.setVisible(not has_plugins)
+
+    def _build_about_tab(self, layout: QVBoxLayout) -> None:
+        from version import VERSION
+
+        wrapper = QWidget()
+        inner = QVBoxLayout(wrapper)
+        inner.setSpacing(16)
+        inner.setContentsMargins(8, 8, 8, 8)
+
+        # ── Name + version ────────────────────────────────────────────────────
+        title = QLabel(f"Plug and Voice — v{VERSION}")
+        title.setProperty("class", "sectionHeader")
+        inner.addWidget(title)
+
+        # ── Credits ───────────────────────────────────────────────────────────
+        credits = QLabel(
+            "Developed by <b>conniptionzs</b><br>"
+            "Funded by <b>The Black Temple</b>"
+        )
+        credits.setTextFormat(Qt.RichText)
+        inner.addWidget(credits)
+
+        # ── Links ─────────────────────────────────────────────────────────────
+        links = QLabel(
+            '<a href="https://github.com/TheBlackTempleOrg/PlugAndVoice">GitHub</a>'
+            '&nbsp;&nbsp;·&nbsp;&nbsp;'
+            '<a href="https://theblacktemple.org">theblacktemple.org</a>'
+        )
+        links.setTextFormat(Qt.RichText)
+        links.setOpenExternalLinks(True)
+        inner.addWidget(links)
+
+        self._add_separator(inner)
+
+        # ── License ───────────────────────────────────────────────────────────
+        license_label = QLabel(
+            "Released under the <b>MIT + Commons Clause</b> license.<br>"
+            "Free to use, modify, and distribute. Not free to sell."
+        )
+        license_label.setTextFormat(Qt.RichText)
+        license_label.setWordWrap(True)
+        inner.addWidget(license_label)
+
+        self._add_separator(inner)
+
+        # ── Dependencies ──────────────────────────────────────────────────────
+        deps_header = QLabel("Built on")
+        deps_header.setProperty("class", "sectionHeader")
+        inner.addWidget(deps_header)
+
+        deps = QLabel(
+            '<a href="https://github.com/spotify/pedalboard">Spotify Pedalboard</a>'
+            ' v0.9.23 — VST3 host and audio engine<br>'
+            "VST editor support patched beyond upstream capabilities."
+        )
+        deps.setTextFormat(Qt.RichText)
+        deps.setOpenExternalLinks(True)
+        deps.setWordWrap(True)
+        inner.addWidget(deps)
+
+        inner.addStretch()
+        layout.addWidget(wrapper)
 
     # ── Populate dropdowns from live enumeration ──────────────────────────────
 
