@@ -28,6 +28,7 @@ from .defaults import (
     SETTINGS_PATH,
     SETTINGS_VERSION,
     VST3_DIR,
+    USERDATA_PATH,
 )
 
 log = logging.getLogger(__name__)
@@ -78,7 +79,7 @@ def setup_logging(level: int = logging.DEBUG) -> None:
 
 def ensure_dirs() -> None:
     """Create vst3, presets, and autosaves directories if they don't exist."""
-    for d in (VST3_DIR, PRESETS_DIR, AUTOSAVES_DIR):
+    for d in (VST3_DIR, PRESETS_DIR, AUTOSAVES_DIR, USERDATA_PATH):
         os.makedirs(d, exist_ok=True)
         log.debug("Directory ensured: %s", os.path.abspath(d))
 

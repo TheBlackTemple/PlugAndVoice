@@ -16,6 +16,7 @@ here — they break when the folder is moved.
 SETTINGS_VERSION = 5
 from utils.paths import app_path, asset_path
 
+USERDATA_PATH = app_path("user_data")
 SETTINGS_PATH = app_path("user_data", "host_settings.json")
 LOG_PATH      = app_path("user_data", "host.log")
 SESSION_PATH  = app_path("user_data", "session.json")
