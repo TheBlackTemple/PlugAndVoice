@@ -41,7 +41,7 @@ from engine import AudioEngine
 from settings import (
     load_settings, save_settings, scan_vst3,
     find_device_by_name, enumerate_devices,
-    SESSION_PATH, PRESETS_DIR,
+    SESSION_PATH, PRESETS_DIR, AUTOSAVES_DIR
 )
 from persistence import (
     capture_raw_state, save_session, load_session,
@@ -718,7 +718,7 @@ class MainWindow(QMainWindow):
         #         is alive risks a data race at the native level.
         capture_raw_state(self._chain_desc, self._engine._active_chain)
 
-        write_autosave(self._chain_desc, self._settings.get("max_autosaves", 0))
+        write_autosave(self._chain_desc, self._settings.get("autosaves_dir", AUTOSAVES_DIR), self._settings.get("max_autosaves", 0))
 
         self._on_engine_stopped()
 
@@ -1513,7 +1513,7 @@ class AutosaveDialog(QDialog):
 
     def _refresh(self) -> None:
         """Reload autosave list from disk and repopulate the widget."""
-        self._entries = list_autosaves()   # always returns newest-first
+        self._entries = list_autosaves(self._settings.get("autosaves_dir", AUTOSAVES_DIR))   # always returns newest-first
         if self._sort_ascending:
             self._entries = list(reversed(self._entries))
         self._repopulate()
