@@ -1513,7 +1513,7 @@ class AutosaveDialog(QDialog):
 
     def _refresh(self) -> None:
         """Reload autosave list from disk and repopulate the widget."""
-        self._entries = list_autosaves(self._settings.get("autosaves_dir", AUTOSAVES_DIR))   # always returns newest-first
+        self._entries = list_autosaves(self._main._settings.get("autosaves_dir", AUTOSAVES_DIR))   # always returns newest-first
         if self._sort_ascending:
             self._entries = list(reversed(self._entries))
         self._repopulate()
