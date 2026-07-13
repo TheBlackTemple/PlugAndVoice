@@ -66,7 +66,7 @@ If you have an microphone setup in OBS that you wanted to use everywhere else bu
 
 ## Requirements
 
-- Windows 10 (tested), likely works on Windows 7+ with WASAPI
+- Windows 10+ (tested), likely works on Windows 8+ with WASAPI
 - [VB-Cable](https://vb-audio.com/Cable/) — free and well known, not bundled for legal reasons (it's our competitors, ha!)
 - Python 3.14, if you are running from source
 
