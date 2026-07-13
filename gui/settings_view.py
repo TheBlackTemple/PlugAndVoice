@@ -661,6 +661,7 @@ class SettingsView(QDialog):
         license_label = QLabel(
             "Released under the <b>MIT + Commons Clause</b> license.<br>"
             "Free to use, modify, and distribute. Not free to sell."
+            "For inquiries, you can write to admin@theblacktemple.org."
         )
         license_label.setTextFormat(Qt.RichText)
         license_label.setWordWrap(True)

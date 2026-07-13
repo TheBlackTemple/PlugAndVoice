@@ -267,3 +267,5 @@ As much as paying an intern counts as vibecoding.
 MIT + Commons Clause. See [LICENSE](./LICENSE) for the full terms.
 
 Free to use, modify, and distribute. Not free to sell.
+
+For inquiries, you can write to admin@theblacktemple.org.
