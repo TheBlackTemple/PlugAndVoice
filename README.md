@@ -1,6 +1,6 @@
 # Plug and Voice
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/logo.png)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/logo.png)
 
 A lightweight VST3 plugin host for your microphone. Load your plugins, apply your chain, and your processed audio becomes a virtual device usable in every app, call, and game — no per-app configuration needed.
 
@@ -8,7 +8,7 @@ Built on [Spotify's Pedalboard](https://github.com/spotify/pedalboard). Windows 
 
 ---
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/pav_main.png)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/pav_main.png)
 
 ---
 
@@ -88,7 +88,7 @@ If you have an microphone setup in OBS that you wanted to use everywhere else bu
 
 ### Running the exe
 
-- Download latest release [HERE](https://github.com/TheBlackTempleOrg/PlugAndVoice/releases/download/v0.1.0-alpha/PlugAndVoice-0.1.0.zip)
+- Download latest release [HERE](https://github.com/TheBlackTemple/PlugAndVoice/releases/download/v0.1.0-alpha/PlugAndVoice-0.1.0.zip)
 
 -Unzip the file by right-clicking the downloaded .zip and extracting the files.
 
@@ -131,7 +131,7 @@ These have been tested and confirmed to work. Some might not render correctly in
 ### RNNoise
 *Noise suppression — free*
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/rnnoise.png)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/rnnoise.png)
 
 Real-time noise suppression using a recurrent neural network. Removes most background noise, keyboard sounds, clicks and more. Set and forget.
 
@@ -150,11 +150,11 @@ Japanese plug-in manufacturer. Clean, well-behaved plugins. Very retro.
 
 - [Download DeeGate] (https://dotec-audio.com/deegate.html)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/deegate.jpg)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/deegate.jpg)
 
 - [Download DeeGain] (https://dotec-audio.com/deegain.html)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/deegain.jpg)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/deegain.jpg)
 
 ---
 
@@ -167,11 +167,11 @@ Some of the best free plugins available. TDR Nova (dynamic EQ) is a standout. TD
 
 - [Download TDR Nova] (https://www.tokyodawn.net/tdr-nova/)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/Seite-1-Kopie-2-1.png)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/Seite-1-Kopie-2-1.png)
 
 - [Download TDR Molotok] (https://www.tokyodawn.net/tdr-molotok/)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/TDR-Molotok-2.png)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/TDR-Molotok-2.png)
 
 
 ---
@@ -185,11 +185,11 @@ Gorgeous retro plugins.
 
 - [Download DC1A] (https://klanghelm.com/contents/products/DC1A)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/DC1A3.jpg)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/DC1A3.jpg)
 
 - [Download MJUC jr.] (https://klanghelm.com/contents/products/MJUCjr)
 
-![Image](https://raw.githubusercontent.com/TheBlackTempleOrg/PAV_assets/refs/heads/master/MJUCjrbig.jpg)
+![Image](https://raw.githubusercontent.com/TheBlackTemple/PAV_assets/refs/heads/master/MJUCjrbig.jpg)
 
 ---
 

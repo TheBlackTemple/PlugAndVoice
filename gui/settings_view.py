@@ -647,7 +647,7 @@ class SettingsView(QDialog):
 
         # ── Links ─────────────────────────────────────────────────────────────
         links = QLabel(
-            '<a href="https://github.com/TheBlackTempleOrg/PlugAndVoice">GitHub</a>'
+            '<a href="https://github.com/TheBlackTemple/PlugAndVoice">GitHub</a>'
             '&nbsp;&nbsp;·&nbsp;&nbsp;'
             '<a href="https://theblacktemple.org">theblacktemple.org</a>'
         )
