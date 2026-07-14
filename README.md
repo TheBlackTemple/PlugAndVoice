@@ -234,7 +234,7 @@ Private mode (aka Exclusive mode) is a way to load a device (a microphone, for e
 ## FAQ
 
 **What's the minimum Windows version?**
-Tested on Windows 10. WASAPI has been available since Vista, so it will likely run on anything from Windows 7 onward. MME is also supported if WASAPI isn't available.
+Tested on Windows 10. Some dependencies were introduced on Windows 8, so we cant provide support for earlier versions. MME is also supported if WASAPI isn't available.
 
 **Can I hook up something other than a mic?**
 Yes — any input device works. Mic is just the primary use case.
