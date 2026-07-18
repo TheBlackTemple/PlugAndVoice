@@ -229,6 +229,10 @@ Private mode (aka Exclusive mode) is a way to load a device (a microphone, for e
 
 3.- Private mode can be useful for privacy-conscious people or those who simply want to keep their default microphone inaccessible.
 
+### Hotkeys not triggering while running a fullscreen app
+
+Our keybind hook uses the least invasive mode available. Otherwise, we would be using something closer to raw input, which might raise false positives on several antivirus software. To solve this, we would essentially need to pay Microsoft for a certificate. For now, either use the app in windowed fullscreen or tab out. A more aggressive hooking strategy is only viable for users that know how to run a separate branch from source.
+
 ---
 
 ## FAQ

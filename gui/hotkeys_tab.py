@@ -208,7 +208,8 @@ class HotkeysTab(QWidget):
             "Hotkey loads the preset immediately without confirmation. "
             "If the preset no longer exists at press time it is silently ignored. "
             "Keybinds are unique across applications. " 
-            "If another application (i.e. discord) already registered a specific bind, it will not trigger here."
+            "If another application (i.e. discord) already registered a specific bind, it will not trigger here, and viceversa."
+            "Fullscreen applications might prevent keybinds from triggering."
         )
         hint.setProperty("class", "hint")
         hint.setWordWrap(True)
