@@ -86,7 +86,7 @@ If you know what a VST plugin is and you own a few, you're home.
 
 ### Running the exe
 
-- Download latest release [HERE](https://github.com/TheBlackTemple/PlugAndVoice/releases/download/v0.1.0-alpha/PlugAndVoice-0.1.0.zip)
+- Download latest release [HERE](https://github.com/TheBlackTemple/PlugAndVoice/releases/download/v0.1.1-alpha/PlugAndVoice-0.1.1.zip)
 
 -Unzip the file by right-clicking the downloaded .zip and extracting the files.
 
