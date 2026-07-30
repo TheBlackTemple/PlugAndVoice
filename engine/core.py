@@ -99,6 +99,16 @@ class AudioEngine:
         # Retains the most recent non-clean status for diagnostics (e.g. "output underflow").
         self._last_xrun_flags: str = ""
 
+        # Buffer-starve tracking — counts consecutive callbacks where a plugin
+        # returned fewer frames than requested (shape mismatch after chain).
+        # Written only by the audio thread; read by GUI via meter payload.
+        # Reset to 0 on any callback where the chain returns the correct frame count.
+        # If this climbs past _STARVE_RESET_THRESHOLD we log a warning and flag
+        # chain_needs_reset so the GUI can trigger a stop/rebuild/start cycle.
+        self._starve_count: int = 0
+        self._STARVE_RESET_THRESHOLD: int = 10   # ~10 consecutive bad blocks before action
+        self.chain_needs_reset: bool = False      # set by audio thread; cleared by GUI after restart
+
         # Captured at stream open; read by callback (immutable during streaming).
         self._samplerate: float = 48000.0
         self._in_channels: int = 1
@@ -142,6 +152,8 @@ class AudioEngine:
         the selected devices are not on the WASAPI host API.
         """
         self.stream_died = False
+        self.chain_needs_reset = False
+        self._starve_count = 0
         self.last_callback_time = time.monotonic()  # reset so watchdog gap on startup is clean
         if self._stream is not None:
             raise RuntimeError("Engine already running; call stop() first.")
@@ -319,15 +331,41 @@ class AudioEngine:
         # 6. Master mute
         out = np.zeros_like(buffer) if self._muted else buffer
 
-        # 7. Orient back to sounddevice (frames, channels)
-        outdata[:] = _from_pb(out)
+        # 7. Orient back to sounddevice (frames, channels).
+        # Guard against Pedalboard plugins with internal latency/buffering that
+        # return fewer frames than requested (including 0). Without this the
+        # assignment raises ValueError:
+        # "could not broadcast input array from shape (0,2) into shape (N,2)".
+        # On startup this self-corrects in 1-2 callbacks (normal plugin warm-up).
+        # During long sessions it can become persistent — a sign that a plugin's
+        # internal buffer state has drifted and needs a hard reset.
+        oriented = _from_pb(out)
+        if oriented.shape[0] != frames:
+            self._starve_count += 1
+            outdata[:] = 0   # emit silence; never crash
+            if self._starve_count >= self._STARVE_RESET_THRESHOLD:
+                # Persistent mismatch — plugin state has drifted unrecoverably.
+                # Flag for the GUI to trigger a stop/rebuild/start cycle.
+                # Only log once per threshold crossing to avoid log flooding.
+                if self._starve_count == self._STARVE_RESET_THRESHOLD:
+                    log.warning(
+                        "Buffer starve: chain returned %d frames instead of %d "
+                        "for %d consecutive callbacks — flagging chain_needs_reset. "
+                        "Likely cause: plugin internal buffer drift after long session.",
+                        oriented.shape[0], frames, self._starve_count,
+                    )
+                self.chain_needs_reset = True
+        else:
+            self._starve_count = 0   # healthy — reset the streak counter
+            outdata[:] = oriented
 
         # 8. Push meter — latest-value-wins, non-blocking
         payload = {
             "input": input_meter,
             "plugins": plugin_meters,
             "master": master_meter,
-            "xrun_flags": self._last_xrun_flags,  # "" when clean; "output underflow" etc. on xrun
+            "xrun_flags": self._last_xrun_flags,    # "" when clean; "output underflow" etc. on xrun
+            "chain_needs_reset": self.chain_needs_reset,  # True when plugin drift detected
         }
         # deque(maxlen=1) append is atomic and never blocks
         self.meter_q.append(payload)

@@ -1315,7 +1315,16 @@ class MainWindow(QMainWindow):
             )
             QTimer.singleShot(0, self._on_stream_died)
             return
-
+        
+        # Watchdog C: plugin buffer drift — a Pedalboard plugin has returned the
+        # wrong frame count for several consecutive callbacks, indicating internal
+        # state has drifted after a long session. The engine emits silence and sets
+        # chain_needs_reset; we trigger the same recovery path as stream_died.
+        if self._engine.chain_needs_reset and not self._restarting:
+            log.warning("Watchdog C: plugin buffer drift detected — auto-restarting engine.")
+            self._engine.chain_needs_reset = False
+            QTimer.singleShot(0, self._on_stream_died)
+            return
 
         if not self._engine.meter_q:
             return
