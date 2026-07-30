@@ -14,7 +14,7 @@ Built on [Spotify's Pedalboard](https://github.com/spotify/pedalboard). Windows 
 
 ## Why this exists
 
-You have a mic chain. Maybe it lives in OBS, maybe in a DAW, maybe you've just collected a few good VST plugins over the years. The problem is it only works in one place.
+You have a mic chain setup, somewhere. Maybe it lives in OBS, maybe in a DAW, maybe you've just collected a few good VST plugins over the years. The problem is it only works in that one place.
 
 Plug and Voice fixes that. Load your plugins, build your chain, and your processed audio becomes a virtual device every app on your system can use — meetings, games, calls, recordings. Set it up once and forget it's running.
 
