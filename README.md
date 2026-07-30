@@ -14,19 +14,17 @@ Built on [Spotify's Pedalboard](https://github.com/spotify/pedalboard). Windows 
 
 ## Why this exists
 
-Voicemeeter, Cantabile, Element, these are full audio suites. They have manuals. They have routing graphs. They break things. If all you want is to run your mic through a few VST plugins and be done with it, none of them are the right tool.
+You have a mic chain. Maybe it lives in OBS, maybe in a DAW, maybe you've just collected a few good VST plugins over the years. The problem is it only works in one place.
 
-Plug and Voice does one thing: takes an input device, runs it through your VST3 chain, and outputs it as a virtual device everything else can use. That's the whole app. 
+Plug and Voice fixes that. Load your plugins, build your chain, and your processed audio becomes a virtual device every app on your system can use — meetings, games, calls, recordings. Set it up once and forget it's running.
 
-No accounts. No telemetry. No installer that touches your Windows audio stack. Copy the folder to a new machine and it works.
+No accounts. No telemetry. No installer that touches your audio stack. Copy the folder to a new machine and it works.
 
-You get consistent audio quality across applications. Meetings, games, recordings, all of them can be routed the same way.
+This is not Voicemeeter. It doesn't do routing graphs, mixing, or multi-output configurations. It does one thing: takes your mic input, runs it through your VST3 chain, and puts clean audio everywhere. If you need a full suite, those exist. If you just want your plugins on your mic, this is faster.
 
-PAV also allows quick-loading presets on a key-bind, so you can apply a full chain of effects on the fly.
+Quick-load presets on a keybind mean you can switch full chains on the fly — one bind for calls, another for recording, another for gaming.
 
-If you know what a VST plugin is and you own a few, this is for you. Think Amplitube or Guitar Rig. Knobs and signal chains, not a DAW.
-
-If you have an microphone setup in OBS that you wanted to use everywhere else but it only works on OBS, this is also for you.
+If you know what a VST plugin is and you own a few, you're home.
 
 ---
 
