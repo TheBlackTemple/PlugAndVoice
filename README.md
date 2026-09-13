@@ -134,7 +134,7 @@ These have been tested and confirmed to work. Some might not render correctly in
 Real-time noise suppression using a recurrent neural network. Removes most background noise, keyboard sounds, clicks and more. Set and forget.
 
 - [Wermans-version] (https://github.com/werman/noise-suppression-for-voice)
-- [Download] (https://release-assets.githubusercontent.com/github-production-release-asset/118370558/2a5daff1-44ea-4d10-ad60-583bfc959dda)
+- [Download] (https://github.com/werman/noise-suppression-for-voice/releases/download/v1.10/win-rnnoise.zip)
 
 
 ---
